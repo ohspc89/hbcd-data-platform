@@ -114,7 +114,7 @@ def save_validation_results(con):
     session_results = validate_session_scans(con)
 
     combined = participant_results.union(session_results)
-    combined.aggregate("rule, status, COUNT(*) AS n_results", "rule, status").show()
+    combined.aggregate("rule, status, COUNT(*) AS n_results", "rule, status")
 
     result = combined.project(
         "*, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS validated_at"

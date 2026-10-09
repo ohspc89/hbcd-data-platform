@@ -3,6 +3,8 @@ import duckdb
 import subprocess
 import sys
 
+import hbcd_data_platform.pipeline as pipeline_module
+
 
 @pytest.fixture
 def test_paths(tmp_path):
@@ -79,19 +81,22 @@ def run_cli(*args):
     )
 
 
-def test_cli_ingest_then_validate(test_paths):
-    # synthetic _sessions.tsv
-    # subprocess.run, ingest, validate
-    # duckdb, scan validation_results and confirm PASS
-    raw_path, db_path = test_paths
+def make_synthetic_sessions_tsv(raw_path, sub=None):
 
-    sub1 = "sub-4122308196"
-    (raw_path / sub1).mkdir()
+    if sub is None:
+        sub = "sub-4122308196"
 
-    synthetic_file = raw_path / sub1 / f"{sub1}_sessions.tsv"
+    (raw_path / sub).mkdir()
+    synthetic_file = raw_path / sub / f"{sub}_sessions.tsv"
     synthetic_file.write_text(
         "session_id\tsite\tage\tage_adjusted\thead_size\nses-V02\thbcdsite33\t0.291\t14\t54\n"
     )
+
+
+def test_cli_ingest_then_validate(test_paths):
+    raw_path, db_path = test_paths
+
+    make_synthetic_sessions_tsv(raw_path)
 
     run_cli("ingest", "--raw-path", str(raw_path), "--db-path", str(db_path))
     run_cli("validate", "--db-path", str(db_path))
@@ -119,3 +124,79 @@ def test_cli_ingest_then_validate(test_paths):
         assert count_after_second == 1
     finally:
         con.close()
+
+
+def test_cli_run_pipeline(test_paths):
+    raw_path, db_path = test_paths
+
+    make_synthetic_sessions_tsv(raw_path, "sub-3810229374")
+
+    run_cli("run", "--raw-path", str(raw_path), "--db-path", str(db_path))
+
+    con = duckdb.connect(db_path)
+    try:
+        row_file_manifest = con.sql("SELECT COUNT(*) FROM file_manifest;").fetchone()[0]
+        assert row_file_manifest == 1
+        validation_results = con.sql(
+            "SELECT rule, status FROM validation_results ORDER BY rule, status;"
+        ).fetchall()
+        assert len(validation_results) == 1
+        assert validation_results[0][1] == "PASS"
+    finally:
+        con.close()
+
+
+def test_pipeline_stops_when_ingest_fails(monkeypatch, test_paths):
+    raw_path, db_path = test_paths
+
+    def fake_load_manifest(raw_path, db_path):
+        raise RuntimeError("Simulated load failure")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "load_manifest",
+        fake_load_manifest,
+    )
+
+    # If ingestion fails, no validation follows?
+    validation_called = False
+
+    def fake_save_validation_results(con):
+        nonlocal validation_called
+        validation_called = True
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "save_validation_results",
+        fake_save_validation_results,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated load failure"):
+        pipeline_module.run_pipeline(raw_path, db_path)
+
+    assert validation_called is False
+    assert not db_path.exists()
+
+
+def test_pipeline_stops_when_validation_fails(monkeypatch, test_paths):
+
+    raw_path, db_path = test_paths
+    make_synthetic_sessions_tsv(raw_path)
+
+    captured_connections = []
+    def fake_save_validation_results(con):
+        captured_connections.append(con)
+        raise RuntimeError("Simulated validation failure")
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "save_validation_results",
+        fake_save_validation_results,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated validation failure"):
+        pipeline_module.run_pipeline(raw_path, db_path)
+
+    with pytest.raises(duckdb.ConnectionException):
+        captured_connections[0].execute("SELECT 1")
+
