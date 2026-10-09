@@ -1,0 +1,29 @@
+{
+    "site": {
+        "Description": "Site where the session data was collected",
+        "Levels": [
+            "hbcdsite89",
+            "hbcdsite64",
+            "hbcdsite02",
+            "hbcdsite48",
+            "hbcdsite95",
+            "hbcdsite23",
+            "hbcdsite42",
+            "SMP",
+            "DTL",
+            "BAH"
+        ]
+    },
+    "age": {
+        "Description": "Age (in years) of the candidate at the time of the session",
+        "Units": "years"
+    },
+    "age_adjusted": {
+        "Description": "Adjusted chronological age (in days) based on the EDD",
+        "Units": "days"
+    },
+    "head_size": {
+        "Description": "Head size",
+        "Units": "centimeters"
+    }
+}
