@@ -6,6 +6,7 @@ import duckdb
 from hbcd_data_platform.load_manifest import load_manifest
 from hbcd_data_platform.validate_manifest import save_validation_results
 from hbcd_data_platform.pipeline import run_pipeline
+from hbcd_data_platform.config import PipelineConfig
 
 
 def main():
@@ -44,10 +45,13 @@ def main():
     )
 
     run_parser.add_argument(
-        "--raw-path", required=True, help="Directory containing BIDS-style data"
+        "--raw-path",
+        required=True,
+        type=Path,
+        help="Directory containing BIDS-style data",
     )
     run_parser.add_argument(
-        "--db-path", required=True, help="Path to the DuckDB database file"
+        "--db-path", required=True, type=Path, help="Path to the DuckDB database file"
     )
 
     args = parser.parse_args()
@@ -66,7 +70,7 @@ def main():
             con.close()
 
     elif args.command == "run":
-        run_pipeline(args.raw_path, args.db_path)
+        run_pipeline(PipelineConfig(raw_path=args.raw_path, db_path=args.db_path))
 
 
 if __name__ == "__main__":

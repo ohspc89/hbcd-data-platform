@@ -1,13 +1,13 @@
-from pathlib import Path
 import duckdb
 import pandas as pd
 import pytest
-from hbcd_data_platform.load_manifest import load_manifest
+
 import hbcd_data_platform.validate_manifest as validation_module
+from hbcd_data_platform.load_manifest import load_manifest
 from hbcd_data_platform.validate_manifest import (
+    save_validation_results,
     validate_participant_sessions,
     validate_session_scans,
-    save_validation_results,
 )
 
 

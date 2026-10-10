@@ -1,9 +1,11 @@
-import pytest
-import duckdb
 import subprocess
 import sys
 
+import duckdb
+import pytest
+
 import hbcd_data_platform.pipeline as pipeline_module
+from hbcd_data_platform.config import PipelineConfig
 
 
 @pytest.fixture
@@ -172,7 +174,7 @@ def test_pipeline_stops_when_ingest_fails(monkeypatch, test_paths):
     )
 
     with pytest.raises(RuntimeError, match="Simulated load failure"):
-        pipeline_module.run_pipeline(raw_path, db_path)
+        pipeline_module.run_pipeline(PipelineConfig(raw_path=raw_path, db_path=db_path))
 
     assert validation_called is False
     assert not db_path.exists()
@@ -184,6 +186,7 @@ def test_pipeline_stops_when_validation_fails(monkeypatch, test_paths):
     make_synthetic_sessions_tsv(raw_path)
 
     captured_connections = []
+
     def fake_save_validation_results(con):
         captured_connections.append(con)
         raise RuntimeError("Simulated validation failure")
@@ -195,8 +198,7 @@ def test_pipeline_stops_when_validation_fails(monkeypatch, test_paths):
     )
 
     with pytest.raises(RuntimeError, match="Simulated validation failure"):
-        pipeline_module.run_pipeline(raw_path, db_path)
+        pipeline_module.run_pipeline(PipelineConfig(raw_path=raw_path, db_path=db_path))
 
     with pytest.raises(duckdb.ConnectionException):
         captured_connections[0].execute("SELECT 1")
-

@@ -1,8 +1,10 @@
 from pathlib import Path
-import pandas as pd
-import duckdb
-import pytest
 from unittest.mock import MagicMock
+
+import duckdb
+import pandas as pd
+import pytest
+
 import hbcd_data_platform.load_manifest as load_manifest_module
 from hbcd_data_platform.load_manifest import load_manifest
 
