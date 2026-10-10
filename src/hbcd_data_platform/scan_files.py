@@ -1,5 +1,5 @@
-from pathlib import Path
 import argparse
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("path", help="path to hbcd raw data")
@@ -72,7 +72,7 @@ def scan_files(root_path):
 
     return records
 
-    
+
 if __name__ == "__main__":
     args = parser.parse_args()
 

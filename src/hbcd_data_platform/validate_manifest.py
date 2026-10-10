@@ -30,7 +30,7 @@ def validate_participant_sessions(con):
         ), subset AS (
             SELECT participant_id, suffix, extension
             FROM file_manifest
-            WHERE extension = '.tsv' AND suffix = 'sessions' AND session_id IS NULL
+            WHERE extension = '.tsv' AND suffix = 'sessions' AND session_id IS NULL AND relative_path = 'sub-' || participant_id || '/' || 'sub-' || participant_id || '_sessions.tsv'
         ), session_validation AS (
             SELECT
                 p.participant_id,
@@ -82,7 +82,7 @@ def validate_session_scans(con):
         ), subset AS (
             SELECT participant_id, session_id, suffix, extension
             FROM file_manifest
-            WHERE extension = '.tsv' AND suffix = 'scans' AND session_id IS NOT NULL
+            WHERE extension = '.tsv' AND suffix = 'scans' AND session_id IS NOT NULL AND relative_path = 'sub-' || participant_id || '/ses-' || session_id || '/sub-' || participant_id || '_ses-' || session_id || '_scans.tsv'
         ), scans_validation AS (
             SELECT
                 p.participant_id,

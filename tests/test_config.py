@@ -3,9 +3,7 @@ from pathlib import Path
 
 import pytest
 
-import hbcd_data_platform.pipeline as pipeline_module
 from hbcd_data_platform.config import PipelineConfig, validate_pipeline_config
-from hbcd_data_platform.pipeline import run_pipeline
 
 
 def test_config_stores_paths(tmp_path):
@@ -21,7 +19,8 @@ def test_config_stores_paths(tmp_path):
 def test_config_is_frozen(tmp_path):
     """Verify that configuration is frozen."""
     obj = PipelineConfig(
-        raw_path=tmp_path / "rawdata", db_path=tmp_path / "hbcd.duckdb"
+        raw_path=tmp_path / "rawdata",
+        db_path=tmp_path / "hbcd.duckdb",
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -29,7 +28,10 @@ def test_config_is_frozen(tmp_path):
 
 
 def test_raw_path_is_an_existing_directory(tmp_path):
-    obj = PipelineConfig(raw_path=tmp_path, db_path=tmp_path / "hbcd.duckdb")
+    raw_path = tmp_path / "rawdata"
+    raw_path.mkdir()
+
+    obj = PipelineConfig(raw_path=raw_path, db_path=tmp_path / "hbcd.duckdb")
 
     validate_pipeline_config(obj)
 
@@ -53,3 +55,14 @@ def test_raw_path_is_not_a_directory(tmp_path):
         validate_pipeline_config(obj)
 
     assert str(raw_path) in str(exc_info.value)
+
+
+def test_db_path_inside_the_input_directory(tmp_path):
+    raw_path = tmp_path
+    db_path = tmp_path / "test.duckdb"
+    obj = PipelineConfig(raw_path=raw_path, db_path=db_path)
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_pipeline_config(obj)
+
+    assert str(db_path.resolve()) in str(exc_info.value)

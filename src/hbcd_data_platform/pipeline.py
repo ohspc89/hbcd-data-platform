@@ -6,7 +6,6 @@ from hbcd_data_platform.config import PipelineConfig, validate_pipeline_config
 from hbcd_data_platform.load_manifest import load_manifest
 from hbcd_data_platform.validate_manifest import save_validation_results
 
-
 logger = logging.getLogger(__name__)
 
 

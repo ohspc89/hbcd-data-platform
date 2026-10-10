@@ -295,3 +295,77 @@ def test_scan_failure_raises_runtime_error(monkeypatch, test_paths):
         load_manifest(raw_path, db_path)
 
     fake_connection.close.assert_called_once()
+
+
+def make_synthetic_sessions_tsv(raw_path, sub=None):
+
+    if sub is None:
+        sub = "sub-3341280012"
+
+    (raw_path / sub).mkdir()
+    synthetic_file = raw_path / sub / f"{sub}_sessions.tsv"
+    synthetic_file.write_text(
+        "session_id\tsite\tage\tage_adjusted\thead_size\nses-V02\thbcdsite33\t0.291\t14\t54\n"
+    )
+
+
+def test_deleted_file_is_removed_from_manifest(test_paths):
+    raw_path, db_path = test_paths
+
+    sub = "sub-3911382960"
+    make_synthetic_sessions_tsv(raw_path, sub=sub)
+
+    load_manifest(raw_path, db_path)
+
+    # delete the synthetic file
+    (raw_path / sub / f"{sub}_sessions.tsv").unlink()
+    deleted_relative_path = f"{sub}/{sub}_sessions.tsv"
+
+    load_manifest(raw_path, db_path)
+
+    # Check if that file's relative_path does not have a row.
+    con = duckdb.connect(db_path)
+    try:
+        count = con.execute(
+            "SELECT COUNT(*) FROM file_manifest WHERE relative_path = ?;",
+            [deleted_relative_path],
+        ).fetchone()[0]
+        assert count == 0
+
+    finally:
+        con.close()
+
+
+def test_manifest_rollback_preserves_previous_results(test_paths, monkeypatch):
+    raw_path, db_path = test_paths
+
+    sub = "sub-3911382960"
+    make_synthetic_sessions_tsv(raw_path, sub=sub)
+
+    load_manifest(raw_path, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        before = con.sql(
+            "SELECT * FROM file_manifest ORDER BY relative_path;"
+        ).fetchall()
+    finally:
+        con.close()
+    make_synthetic_sessions_tsv(raw_path, sub="sub-3911382961")
+
+    def fail_delete(con, df):
+        con.sql("DELETE FROM table_that_does_not_exist")
+
+    monkeypatch.setattr(load_manifest_module, "_delete_missing_files", fail_delete)
+
+    with pytest.raises(duckdb.CatalogException):
+        load_manifest_module.load_manifest(raw_path, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        after = con.sql(
+            "SELECT * FROM file_manifest ORDER BY relative_path;"
+        ).fetchall()
+        assert after == before
+    finally:
+        con.close()

@@ -180,7 +180,6 @@ def test_validation_rollback_preserves_existing_results(monkeypatch, test_paths)
 
         raise RuntimeError("Simulated INSERT failure")
 
-
     load_manifest(raw_path, db_path)
 
     con = duckdb.connect(db_path)
@@ -217,5 +216,45 @@ def test_validation_rollback_preserves_existing_results(monkeypatch, test_paths)
 
         pd.testing.assert_frame_equal(before, after)
 
+    finally:
+        con.close()
+
+
+def test_participant_sessions_in_wrong_directory_returns_fail(test_paths):
+    raw_path, db_path = test_paths
+
+    sub = "sub-9123847713"
+    wrong_path = raw_path / f"{sub}_sessions.tsv"
+    wrong_path.write_text("session_id\nses-01\n", encoding="utf-8")
+
+    load_manifest(raw_path, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        results = validate_participant_sessions(con).fetchall()
+        assert len(results) == 1
+        assert results[0][3] == "FAIL"
+        assert results[0][4] == 0
+    finally:
+        con.close()
+
+
+def test_session_scans_in_wrong_directory_returns_fail(test_paths):
+    raw_path, db_path = test_paths
+
+    sub = "sub-9123847713"
+    ses = "ses-V02"
+    wrong_path = raw_path / f"{sub}_{ses}_scans.tsv"
+    wrong_path.write_text("filename\nmotion/synthetic_motion.tsv\n", encoding="utf-8")
+
+    load_manifest(raw_path, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        results = validate_session_scans(con).fetchall()
+        assert len(results) == 1
+        assert results[0][2] == "session_scans"
+        assert results[0][3] == "FAIL"
+        assert results[0][4] == 0
     finally:
         con.close()

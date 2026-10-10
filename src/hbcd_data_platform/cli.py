@@ -3,10 +3,11 @@ import logging
 from pathlib import Path
 
 import duckdb
+
+from hbcd_data_platform.config import PipelineConfig, validate_pipeline_config
 from hbcd_data_platform.load_manifest import load_manifest
-from hbcd_data_platform.validate_manifest import save_validation_results
 from hbcd_data_platform.pipeline import run_pipeline
-from hbcd_data_platform.config import PipelineConfig
+from hbcd_data_platform.validate_manifest import save_validation_results
 
 
 def main():
@@ -24,10 +25,13 @@ def main():
         "ingest", help="Scan files and update the DuckDB manifest"
     )
     ingest_parser.add_argument(
-        "--raw-path", required=True, help="Directory containing BIDS-style data"
+        "--raw-path",
+        required=True,
+        type=Path,
+        help="Directory containing BIDS-style data",
     )
     ingest_parser.add_argument(
-        "--db-path", required=True, help="Path to the DuckDB database file"
+        "--db-path", required=True, type=Path, help="Path to the DuckDB database file"
     )
 
     # validate
@@ -57,6 +61,8 @@ def main():
     args = parser.parse_args()
 
     if args.command == "ingest":
+        config = PipelineConfig(raw_path=args.raw_path, db_path=args.db_path)
+        validate_pipeline_config(config)
         load_manifest(args.raw_path, args.db_path)
 
     elif args.command == "validate":

@@ -36,12 +36,13 @@ def test_cli_ingest_creates_manifest(test_paths):
             "hbcd_data_platform.cli",
             "ingest",
             "--raw-path",
-            str(raw_path),
+            raw_path,
             "--db-path",
-            str(db_path),
+            db_path,
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     con = duckdb.connect(db_path)
@@ -64,10 +65,11 @@ def test_cli_ingest_requires_db_path(test_paths):
             "hbcd_data_platform.cli",
             "ingest",
             "--raw-path",
-            str(raw_path),
+            raw_path,
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 2, result.stderr
@@ -100,8 +102,8 @@ def test_cli_ingest_then_validate(test_paths):
 
     make_synthetic_sessions_tsv(raw_path)
 
-    run_cli("ingest", "--raw-path", str(raw_path), "--db-path", str(db_path))
-    run_cli("validate", "--db-path", str(db_path))
+    run_cli("ingest", "--raw-path", raw_path, "--db-path", db_path)
+    run_cli("validate", "--db-path", db_path)
 
     con = duckdb.connect(db_path)
     try:
@@ -202,3 +204,81 @@ def test_pipeline_stops_when_validation_fails(monkeypatch, test_paths):
 
     with pytest.raises(duckdb.ConnectionException):
         captured_connections[0].execute("SELECT 1")
+
+
+def test_ingest_fails_when_raw_path_does_not_exist(tmp_path):
+    raw_path = tmp_path / "rawdata"
+    db_path = tmp_path / "test.duckdb"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "ingest",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stderr
+    assert not db_path.exists()
+    assert str(raw_path) in result.stderr
+
+
+def test_ingest_fails_when_raw_path_is_not_a_directory(tmp_path):
+    raw_path = tmp_path / "raw_file.txt"
+    db_path = tmp_path / "test.duckdb"
+
+    raw_path.write_text("synthetic file", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "ingest",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stderr
+    assert not db_path.exists()
+    assert str(raw_path) in result.stderr
+
+
+def test_ingest_fails_when_db_path_is_relative_to_raw_path(tmp_path):
+    raw_path = tmp_path / "rawdata"
+    raw_path.mkdir()
+    db_path = raw_path / "test.duckdb"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "ingest",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0, result.stderr
+    assert not db_path.exists()
+    assert str(db_path.resolve()) in result.stderr

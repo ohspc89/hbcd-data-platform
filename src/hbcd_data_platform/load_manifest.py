@@ -1,7 +1,24 @@
 import argparse
-import pandas as pd
+from pathlib import Path
+
 import duckdb
+import pandas as pd
+
+from hbcd_data_platform.config import PipelineConfig, validate_pipeline_config
 from hbcd_data_platform.scan_files import scan_files
+
+
+def _delete_missing_files(con, df) -> None:
+    con.sql(
+        """
+        DELETE FROM file_manifest
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM df
+            WHERE df.relative_path = file_manifest.relative_path
+        );
+        """
+    )
 
 
 def load_manifest(raw_path, db_path, scan_time=None):
@@ -20,6 +37,11 @@ def load_manifest(raw_path, db_path, scan_time=None):
     -------
     None
     """
+    config = PipelineConfig(
+        raw_path=Path(raw_path),
+        db_path=Path(db_path),
+    )
+    validate_pipeline_config(config)
     con = duckdb.connect(db_path)
 
     try:
@@ -75,7 +97,7 @@ def load_manifest(raw_path, db_path, scan_time=None):
         )
 
         for expected in expected_columns:
-            if not expected in df:
+            if expected not in df:
                 df[expected] = pd.NA
 
         df["modified_at"] = pd.to_datetime(df["modified_at"], unit="s")
@@ -85,63 +107,71 @@ def load_manifest(raw_path, db_path, scan_time=None):
         df["discovered_at"] = scan_time
         df["last_seen_at"] = scan_time
 
-        con.sql(
-            """
-            INSERT INTO file_manifest (
-                filename,
-                relative_path,
-                extension,
-                size_bytes,
-                modified_at,
-                participant_id,
-                session_id,
-                task,
-                tracking_system,
-                acquisition,
-                suffix,
-                discovered_at,
-                last_seen_at
+        con.sql("BEGIN TRANSACTION")
+        try:
+            con.sql(
+                """
+                INSERT INTO file_manifest (
+                    filename,
+                    relative_path,
+                    extension,
+                    size_bytes,
+                    modified_at,
+                    participant_id,
+                    session_id,
+                    task,
+                    tracking_system,
+                    acquisition,
+                    suffix,
+                    discovered_at,
+                    last_seen_at
+                )
+                SELECT
+                    filename,
+                    relative_path,
+                    extension,
+                    size_bytes,
+                    modified_at,
+                    participant_id,
+                    session_id,
+                    task,
+                    tracking_system,
+                    acquisition,
+                    suffix,
+                    discovered_at,
+                    last_seen_at
+                FROM df
+                ON CONFLICT (relative_path)
+                DO UPDATE SET
+                    filename = excluded.filename,
+                    extension = excluded.extension,
+                    size_bytes = excluded.size_bytes,
+                    modified_at = excluded.modified_at,
+                    participant_id = excluded.participant_id,
+                    session_id = excluded.session_id,
+                    task = excluded.task,
+                    tracking_system = excluded.tracking_system,
+                    acquisition = excluded.acquisition,
+                    suffix = excluded.suffix,
+                    last_seen_at = excluded.last_seen_at;
+                """
             )
-            SELECT
-                filename,
-                relative_path,
-                extension,
-                size_bytes,
-                modified_at,
-                participant_id,
-                session_id,
-                task,
-                tracking_system,
-                acquisition,
-                suffix,
-                discovered_at,
-                last_seen_at
-            FROM df
-            ON CONFLICT (relative_path)
-            DO UPDATE SET
-                filename = excluded.filename,
-                extension = excluded.extension,
-                size_bytes = excluded.size_bytes,
-                modified_at = excluded.modified_at,
-                participant_id = excluded.participant_id,
-                session_id = excluded.session_id,
-                task = excluded.task,
-                tracking_system = excluded.tracking_system,
-                acquisition = excluded.acquisition,
-                suffix = excluded.suffix,
-                last_seen_at = excluded.last_seen_at;
-            """
-        )
+            _delete_missing_files(con, df)
+            con.sql("COMMIT")
+        except Exception:
+            con.sql("ROLLBACK")
+            raise
     finally:
         con.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", help="Path to HBCD raw BIDS directory")
+    parser.add_argument("path", type=Path, help="Path to HBCD raw BIDS directory")
     parser.add_argument(
         "--db",
         default="hbcd.duckdb",
+        type=Path,
         help="Path to DuckDB database",
     )
 
