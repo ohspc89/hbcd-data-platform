@@ -2,7 +2,13 @@ import pandas as pd
 import pytest
 
 from conftest import make_synthetic_imu_tsv
-from hbcd_data_platform.imu import summarize_imu_timestamps, validate_imu_timestamps
+from hbcd_data_platform.imu import (
+    expected_imu_columns,
+    summarize_imu_timestamps,
+    validate_imu_schema,
+    validate_imu_timestamps,
+)
+
 
 def test_evaluate_tsv(tmp_path):
 
@@ -16,14 +22,14 @@ def test_evaluate_tsv(tmp_path):
         df = pd.read_csv(tmp_path / fname, sep="\t")
 
         assert list(df.columns) == [
-                "imu_latency",
-                f"{side}Ankle_ACCEL_x",
-                f"{side}Ankle_ACCEL_y",
-                f"{side}Ankle_ACCEL_z",
-                f"{side}Ankle_GYRO_x",
-                f"{side}Ankle_GYRO_y",
-                f"{side}Ankle_GYRO_z",
-               ]
+            "imu_latency",
+            f"{side}Ankle_ACCEL_x",
+            f"{side}Ankle_ACCEL_y",
+            f"{side}Ankle_ACCEL_z",
+            f"{side}Ankle_GYRO_x",
+            f"{side}Ankle_GYRO_y",
+            f"{side}Ankle_GYRO_z",
+        ]
 
         assert len(df) == 200
         assert df.iloc[0]["imu_latency"] == pytest.approx(0.0)
@@ -48,28 +54,19 @@ def test_evaluate_tsv(tmp_path):
 
 
 def test_filename_without_task_raises_value_error(tmp_path):
-    fname = (
-        "sub-0001_ses-V02_"
-        "tracksys-imu_acq-primary_motion.tsv"
-    )
+    fname = "sub-0001_ses-V02_tracksys-imu_acq-primary_motion.tsv"
     with pytest.raises(ValueError):
         make_synthetic_imu_tsv(tmp_path / fname)
 
 
 def test_filename_with_invalid_task_raises_value_error(tmp_path):
-    fname = (
-        "sub-0001_ses-V02_task-SquidLegMovement_"
-        "tracksys-imu_acq-primary_motion.tsv"
-    )
+    fname = "sub-0001_ses-V02_task-SquidLegMovement_tracksys-imu_acq-primary_motion.tsv"
     with pytest.raises(ValueError):
         make_synthetic_imu_tsv(tmp_path / fname)
 
 
 def test_summarize_imu_timestamps_returns_expected_values(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     make_synthetic_imu_tsv(tmp_path / fname)
 
     out = summarize_imu_timestamps(tmp_path / fname)
@@ -81,10 +78,7 @@ def test_summarize_imu_timestamps_returns_expected_values(tmp_path):
 
 
 def test_file_with_header_only_raises_value_error(tmp_path):
-    fname = (
-        "sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-    )
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     fpath.write_text(
         "imu_latency\tLeftAnkle_ACCEL_x\tLeftAnkle_ACCEL_y\tLeftAnkle_ACCEL_z\tLeftAnkle_GYRO_x\tLeftAnkle_GYRO_y\tLeftAnkle_GYRO_z\n",
@@ -96,10 +90,7 @@ def test_file_with_header_only_raises_value_error(tmp_path):
 
 
 def test_normal_sampling_hz(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -108,10 +99,7 @@ def test_normal_sampling_hz(tmp_path):
 
 
 def test_timestamp_summary_detects_missing_sample(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -127,10 +115,7 @@ def test_timestamp_summary_detects_missing_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_out_of_order_sample(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -146,10 +131,7 @@ def test_timestamp_summary_detects_out_of_order_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_duplicate_samples(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -165,10 +147,7 @@ def test_timestamp_summary_detects_duplicate_samples(tmp_path):
 
 
 def test_timestamp_summary_detects_missing_timestamp(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -178,17 +157,14 @@ def test_timestamp_summary_detects_missing_timestamp(tmp_path):
 
     validation = validate_imu_timestamps(fpath)
     assert validation["null_timestamp_count"] == 1
-    assert validation["interval_count"] == 197 
+    assert validation["interval_count"] == 197
     assert validation["min_interval_s"] == pytest.approx(0.04)
     assert validation["max_interval_s"] == pytest.approx(0.04)
     assert validation["status"] == "FAIL"
 
 
 def test_timestamp_summary_detects_single_sample(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -205,10 +181,7 @@ def test_timestamp_summary_detects_single_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_different_expected_frequency(tmp_path):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -218,10 +191,7 @@ def test_timestamp_summary_detects_different_expected_frequency(tmp_path):
 
 @pytest.mark.parametrize("expected_hz", [0, -25])
 def test_invalid_expected_frequency_raises_value_error(tmp_path, expected_hz):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -231,13 +201,15 @@ def test_invalid_expected_frequency_raises_value_error(tmp_path, expected_hz):
 
 @pytest.mark.parametrize(
     ("offset_s", "expected_status"),
-    [(0.0000005, "PASS"), (0.0000020, "FAIL"),],
+    [
+        (0.0000005, "PASS"),
+        (0.0000020, "FAIL"),
+    ],
 )
-def test_timestamp_tolerance_controls_validation_status(tmp_path, offset_s, expected_status):
-    fname = (
-        f"sub-0001_ses-V02_task-LeftLegMovement"
-        "_tracksys-imu_acq-primary_motion.tsv"
-        )
+def test_timestamp_tolerance_controls_validation_status(
+    tmp_path, offset_s, expected_status
+):
+    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -249,3 +221,193 @@ def test_timestamp_tolerance_controls_validation_status(tmp_path, offset_s, expe
     assert validation["status"] == expected_status
     assert validation["max_interval_s"] == pytest.approx(0.04 + offset_s)
     assert validation["min_interval_s"] == pytest.approx(0.04 - offset_s)
+
+
+def test_expected_imu_columns_for_left_task(tmp_path):
+    valid_left_task = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    assert expected_imu_columns(valid_left_task) == [
+        "imu_latency",
+        "LeftAnkle_ACCEL_x",
+        "LeftAnkle_ACCEL_y",
+        "LeftAnkle_ACCEL_z",
+        "LeftAnkle_GYRO_x",
+        "LeftAnkle_GYRO_y",
+        "LeftAnkle_GYRO_z",
+    ]
+
+
+def test_expected_imu_columns_for_right_task(tmp_path):
+    valid_right_task = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-RightLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    assert expected_imu_columns(valid_right_task) == [
+        "imu_latency",
+        "RightAnkle_ACCEL_x",
+        "RightAnkle_ACCEL_y",
+        "RightAnkle_ACCEL_z",
+        "RightAnkle_GYRO_x",
+        "RightAnkle_GYRO_y",
+        "RightAnkle_GYRO_z",
+    ]
+
+
+def test_expected_imu_columns_rejects_invalid_task(tmp_path):
+    no_task = tmp_path / "sub-2000000001_ses-V02_tracksys-imu_acq-primary_motion.tsv"
+    invalid_task = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-SquidLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    invalid_task_extra = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovementExtra_tracksys-imu_acq-primary_motion.tsv"
+    )
+
+    with pytest.raises(ValueError, match="missing IMU task"):
+        expected_imu_columns(no_task)
+    with pytest.raises(ValueError, match="Unsupported"):
+        expected_imu_columns(invalid_task)
+    with pytest.raises(ValueError, match="Unsupported"):
+        expected_imu_columns(invalid_task_extra)
+
+
+def test_validate_imu_columns_for_left_task(tmp_path):
+    valid_left_task = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(valid_left_task)
+    out = validate_imu_schema(valid_left_task)
+
+    assert out["status"] == "PASS"
+    assert out["missing_columns"] == []
+    assert out["extra_columns"] == []
+    assert out["duplicate_columns"] == []
+
+
+def test_validate_imu_columns_for_right_task(tmp_path):
+    valid_right_task = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-RightLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(valid_right_task)
+    out = validate_imu_schema(valid_right_task)
+
+    assert out["status"] == "PASS"
+    assert out["missing_columns"] == []
+    assert out["extra_columns"] == []
+    assert out["duplicate_columns"] == []
+
+
+def test_validate_missing_column(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-RightLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    df = pd.read_csv(filepath, sep="\t")
+    df.drop(columns="imu_latency", inplace=True)
+    df.to_csv(filepath, sep="\t", index=False)
+
+    out = validate_imu_schema(filepath)
+    assert out["status"] == "FAIL"
+    assert out["missing_columns"] == ["imu_latency"]
+    assert out["extra_columns"] == []
+    assert out["duplicate_columns"] == []
+
+
+def test_validate_unexpected_column(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-RightLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    df = pd.read_csv(filepath, sep="\t")
+    # add an unexpected column
+    df["unexpected"] = [0.12] * len(df)
+    df.to_csv(filepath, sep="\t", index=False)
+
+    out = validate_imu_schema(filepath)
+
+    assert out["status"] == "FAIL"
+    assert out["missing_columns"] == []
+    assert out["extra_columns"] == ["unexpected"]
+    assert out["duplicate_columns"] == []
+
+
+def test_column_names_switched(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    df = pd.read_csv(filepath, sep="\t")
+    unexpected_columns = [
+        "RightAnkle_ACCEL_x",
+        "RightAnkle_ACCEL_y",
+        "RightAnkle_ACCEL_z",
+        "RightAnkle_GYRO_x",
+        "RightAnkle_GYRO_y",
+        "RightAnkle_GYRO_z",
+    ]
+    missing_columns = [
+        "LeftAnkle_ACCEL_x",
+        "LeftAnkle_ACCEL_y",
+        "LeftAnkle_ACCEL_z",
+        "LeftAnkle_GYRO_x",
+        "LeftAnkle_GYRO_y",
+        "LeftAnkle_GYRO_z",
+    ]
+    df.rename(
+        columns=dict(zip(df.columns, ["imu_latency"] + unexpected_columns)),
+        inplace=True,
+    )
+    df.to_csv(filepath, sep="\t", index=False)
+
+    out = validate_imu_schema(filepath)
+
+    assert out["status"] == "FAIL"
+    assert out["missing_columns"] == missing_columns
+    assert out["extra_columns"] == unexpected_columns
+    assert out["duplicate_columns"] == []
+
+
+def test_column_names_shuffled(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    df = pd.read_csv(filepath, sep="\t")
+    # shuffle columns
+    df = df.iloc[:, [6, 2, 3, 1, 4, 0, 5]]
+    df.to_csv(filepath, sep="\t", index=False)
+
+    out = validate_imu_schema(filepath)
+
+    assert out["status"] == "PASS"
+    assert out["missing_columns"] == []
+    assert out["extra_columns"] == []
+    assert out["duplicate_columns"] == []
+
+
+def test_duplicate_column_names(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    df = pd.read_csv(filepath, sep="\t")
+    df["duplicate"] = df["LeftAnkle_ACCEL_y"]
+    df.rename(columns={"duplicate": "LeftAnkle_ACCEL_y"}, inplace=True)
+    df.to_csv(filepath, sep="\t", index=False)
+
+    out = validate_imu_schema(filepath)
+
+    assert out["status"] == "FAIL"
+    assert out["missing_columns"] == []
+    assert out["extra_columns"] == []
+    assert out["duplicate_columns"] == ["LeftAnkle_ACCEL_y"]

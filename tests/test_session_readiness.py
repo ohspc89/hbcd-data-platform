@@ -37,9 +37,5 @@ def test_session_readiness(tmp_path):
 
     expected[bool_columns] = expected[bool_columns].astype(bool)
 
-    print(actual)
-    print(expected)
-
     # 5. Compare
     pd.testing.assert_frame_equal(actual, expected)
-

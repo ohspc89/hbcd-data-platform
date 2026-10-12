@@ -25,17 +25,17 @@ def make_synthetic_imu_tsv(path: Path) -> None:
         f"{task}Ankle_GYRO_z",
     ]
     df = pd.DataFrame(
-            np.vstack(
-                (
-                    np.arange(200) / 25,
-                    np.zeros(200),
-                    np.ones(200),
-                    np.zeros(200),
-                    np.full(200, 100),
-                    np.full(200, 100),
-                    np.full(200, 100),
-                )
-            ).T
-         )
+        np.vstack(
+            (
+                np.arange(200) / 25,
+                np.zeros(200),
+                np.ones(200),
+                np.zeros(200),
+                np.full(200, 100),
+                np.full(200, 100),
+                np.full(200, 100),
+            )
+        ).T
+    )
     df.columns = columns
     df.to_csv(path, sep="\t", index=False)

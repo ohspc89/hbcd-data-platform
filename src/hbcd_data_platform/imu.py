@@ -1,7 +1,11 @@
+import csv
 import math
+import re
 from pathlib import Path
 
+from collections import Counter
 import duckdb
+
 
 def summarize_imu_timestamps(path: Path) -> dict[str, int | float]:
     con = duckdb.connect()
@@ -38,7 +42,7 @@ def summarize_imu_timestamps(path: Path) -> dict[str, int | float]:
                 COUNT(interval_s) AS interval_count,
             FROM intervals;
             """,
-            [str(path)]
+            [str(path)],
         ).fetchone()
 
         if row[0] == 0:
@@ -69,8 +73,8 @@ def validate_imu_timestamps(
     summary = summarize_imu_timestamps(path)
     expected_interval_s = 1 / expected_hz
 
-    min_interval = summary["min_interval_s"] 
-    max_interval = summary["max_interval_s"] 
+    min_interval = summary["min_interval_s"]
+    max_interval = summary["max_interval_s"]
 
     intervals_are_valid = (
         summary["sample_count"] >= 2
@@ -78,14 +82,8 @@ def validate_imu_timestamps(
         and summary["interval_count"] == summary["sample_count"] - 1
         and min_interval is not None
         and max_interval is not None
-        and math.isclose(
-            min_interval,
-            expected_interval_s,
-            abs_tol=tolerance_s)
-        and math.isclose(
-            max_interval,
-            expected_interval_s,
-            abs_tol=tolerance_s)
+        and math.isclose(min_interval, expected_interval_s, abs_tol=tolerance_s)
+        and math.isclose(max_interval, expected_interval_s, abs_tol=tolerance_s)
     )
 
     return {
@@ -97,4 +95,49 @@ def validate_imu_timestamps(
         "max_interval_s": max_interval,
         "expected_interval_s": expected_interval_s,
         "tolerance_s": tolerance_s,
+    }
+
+
+def expected_imu_columns(path: Path) -> list[str]:
+    # find task-(Left|Right)LegMovement from filename
+    task_pattern = re.compile(r"(?:^|_)task-(Left|Right)LegMovement(?=_|$)")
+    match = task_pattern.search(path.stem)
+    if match is not None:
+        leg = match.group(1)
+    else:
+        raise ValueError(f"Unsupported or missing IMU task: {path}")
+
+    return [
+        "imu_latency",
+        f"{leg}Ankle_ACCEL_x",
+        f"{leg}Ankle_ACCEL_y",
+        f"{leg}Ankle_ACCEL_z",
+        f"{leg}Ankle_GYRO_x",
+        f"{leg}Ankle_GYRO_y",
+        f"{leg}Ankle_GYRO_z",
+    ]
+
+
+def validate_imu_schema(path: Path) -> dict:
+    expected_columns = expected_imu_columns(path)
+
+    with path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.reader(f, delimiter="\t")
+        observed_columns = next(reader, [])
+
+    missing = set(expected_columns) - set(observed_columns)
+    extra = set(observed_columns) - set(expected_columns)
+    counts = Counter(observed_columns)
+    duplicates = sorted(name for name, count in counts.items() if count > 1)
+
+    if len(missing) == len(extra) == len(duplicates) == 0:
+        status = "PASS"
+    else:
+        status = "FAIL"
+
+    return {
+        "status": status,
+        "missing_columns": sorted(missing),
+        "extra_columns": sorted(extra),
+        "duplicate_columns": duplicates,
     }

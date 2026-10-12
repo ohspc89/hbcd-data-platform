@@ -8,6 +8,8 @@ import pytest
 import hbcd_data_platform.load_manifest as load_manifest_module
 from hbcd_data_platform.load_manifest import load_manifest
 
+TEST_DIR = Path(__file__).resolve().parent
+
 
 @pytest.fixture
 def test_paths(tmp_path):
@@ -31,7 +33,7 @@ def test_initial_load(tmp_path):
         COUNT(*) == N
     """
 
-    raw_path = Path("tests/fixtures/rawdata")
+    raw_path = TEST_DIR / "fixtures/rawdata"
     db_path = tmp_path / "test.duckdb"
 
     load_manifest(raw_path, db_path)
@@ -60,7 +62,7 @@ def test_repeated_load_does_not_duplicate_files(tmp_path):
     Then:
         COUNT(*) = N
     """
-    raw_path = Path("tests/fixtures/rawdata")
+    raw_path = TEST_DIR / "fixtures/rawdata"
     db_path = tmp_path / "test.duckdb"
 
     load_manifest(raw_path, db_path)
@@ -94,7 +96,7 @@ def test_repeated_load_preserves_file_id(tmp_path):
     Then:
         first == second
     """
-    raw_path = Path("tests/fixtures/rawdata")
+    raw_path = TEST_DIR / "fixtures/rawdata"
     db_path = tmp_path / "test.duckdb"
 
     load_manifest(raw_path, db_path)
