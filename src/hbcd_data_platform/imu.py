@@ -1,7 +1,7 @@
 import csv
 import math
-import re
 from pathlib import Path
+import re
 
 from collections import Counter
 import duckdb
@@ -141,3 +141,58 @@ def validate_imu_schema(path: Path) -> dict:
         "extra_columns": sorted(extra),
         "duplicate_columns": duplicates,
     }
+
+
+def summarize_accel_x_qc(path: Path, threshold: float) -> dict:
+
+    if any(
+        (
+            threshold <= 0,
+            threshold > 16,
+            math.isnan(threshold),
+            math.isinf(threshold),
+        )
+    ):
+        raise ValueError(f"invalid threshold: '{threshold}'")
+
+    expected_columns = expected_imu_columns(path)
+    accel_x_column = next(x for x in expected_columns if "ACCEL_x" in x)
+
+    con = duckdb.connect()
+    query = f"""
+        SELECT
+            COUNT(*) AS sample_count,
+            COALESCE(
+                SUM(
+                    CASE WHEN {accel_x_column} IS NULL
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS null_count,
+            COALESCE(
+                SUM(
+                    CASE WHEN {accel_x_column} > 16
+                    OR {accel_x_column} < -16
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS out_of_range_count,
+            COALESCE(
+                SUM(
+                    CASE WHEN {accel_x_column} >= $threshold
+                    OR {accel_x_column} <= -$threshold
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS saturation_count
+        FROM read_parquet($input_path)
+    """
+    try:
+        results = con.execute(
+            query, {"input_path": str(path), "threshold": threshold}
+        ).fetchone()
+        return {
+            "sample_count": results[0],
+            "null_count": results[1],
+            "out_of_range_count": results[2],
+            "saturation_count": results[3],
+        }
+    finally:
+        con.close()

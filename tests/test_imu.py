@@ -1,9 +1,13 @@
 import pandas as pd
+from pandas.testing import assert_frame_equal
 import pytest
 
-from conftest import make_synthetic_imu_tsv
+import duckdb
+
+from conftest import make_synthetic_imu_tsv, make_synthetic_imu_parquet
 from hbcd_data_platform.imu import (
     expected_imu_columns,
+    summarize_accel_x_qc,
     summarize_imu_timestamps,
     validate_imu_schema,
     validate_imu_timestamps,
@@ -411,3 +415,263 @@ def test_duplicate_column_names(tmp_path):
     assert out["missing_columns"] == []
     assert out["extra_columns"] == []
     assert out["duplicate_columns"] == ["LeftAnkle_ACCEL_y"]
+
+
+def test_validate_parquet_conversion(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    )
+    make_synthetic_imu_tsv(filepath)
+    parquet_path = filepath.with_suffix(".parquet")
+    con = duckdb.connect()
+    try:
+        # Read it, and save as a praquet
+        con.execute(
+            """
+            COPY (
+                SELECT *
+                FROM read_csv($input_path, delim='\t', header=true)
+            )
+            TO $output_path (FORMAT parquet);
+            """,
+            {
+                "input_path": str(filepath),
+                "output_path": str(parquet_path),
+            },
+        )
+        # Read the parquet, and check the following
+        result = con.execute(
+            """
+            SELECT
+                COUNT(*) AS sample_count,
+                MIN(imu_latency) AS start_s,
+                MAX(imu_latency) AS end_s
+            FROM read_parquet(?);
+            """,
+            [str(parquet_path)],
+        ).fetchone()
+
+        assert result[0] == 200
+        assert result[1] == pytest.approx(0.0)
+        assert result[2] == pytest.approx(7.96)
+
+        original = pd.read_csv(filepath, sep="\t")
+        parquet = con.execute(
+            "SELECT * FROM read_parquet(?);", [str(parquet_path)]
+        ).fetchdf()
+
+        assert list(parquet.columns) == list(original.columns)
+        assert_frame_equal(original, parquet, check_dtype=False)
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize("leg", ["Left", "Right"])
+def test_accel_x_qc(tmp_path, leg):
+    filepath = tmp_path / (
+        f"sub-2000000001_ses-V02_task-{leg}LegMovement"
+        "_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    temporary_threshold = 15.5
+    results = summarize_accel_x_qc(filepath, temporary_threshold)
+
+    assert results["sample_count"] == 200
+    assert results["null_count"] == 0
+    assert results["out_of_range_count"] == 0
+    assert results["saturation_count"] == 0
+
+
+def test_accel_x_qc_single_null(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": None, "timestamp": 4.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    temporary_threshold = 15.5
+    results = summarize_accel_x_qc(filepath, temporary_threshold)
+
+    assert results["sample_count"] == 200
+    assert results["null_count"] == 1
+    assert results["out_of_range_count"] == 0
+    assert results["saturation_count"] == 0
+
+
+def test_accel_x_qc_over_limit(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": 16.1, "timestamp": 4.0},
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": -16.1, "timestamp": 6.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    temporary_threshold = 15.5
+    results = summarize_accel_x_qc(filepath, temporary_threshold)
+
+    assert results["sample_count"] == 200
+    assert results["null_count"] == 0
+    assert results["out_of_range_count"] == 2
+    assert results["saturation_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected_count"),
+    [
+        ([15.5, -15.5], 2),
+        ([15.49, -15.49], 0),
+    ],
+)
+def test_accel_x_qc_at_saturation_limit(tmp_path, limit, expected_count):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": limit[0], "timestamp": 4.0},
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": limit[1], "timestamp": 6.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    temporary_threshold = 15.5
+    results = summarize_accel_x_qc(filepath, temporary_threshold)
+
+    assert results["sample_count"] == 200
+    assert results["null_count"] == 0
+    assert results["out_of_range_count"] == 0
+    assert results["saturation_count"] == expected_count
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    [0, -1, 16.1, float("nan"), float("inf"), float("-inf")],
+)
+def test_accel_x_qc_rejects_invalid_threshold(tmp_path, threshold):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="invalid threshold"):
+        summarize_accel_x_qc(filepath, threshold)
+
+
+def test_accel_x_qc_returns_zero_counts_for_empty_recording(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            """
+            CREATE TEMP TABLE empty_imu AS
+            SELECT *
+            FROM read_parquet(?)
+            WHERE FALSE;
+            """,
+            [str(filepath)],
+        )
+
+        con.execute(
+            "COPY empty_imu TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    results = summarize_accel_x_qc(filepath, 15.5)
+
+    assert results == {
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
