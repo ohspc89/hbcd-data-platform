@@ -1,0 +1,5 @@
+participant_id,session_id,has_scans,has_left_primary,has_right_primary,has_left_calibration,has_right_calibration,ready_for_imu_qc
+2000000001,V02,1,1,1,1,1,1
+2000000001,V03,1,1,1,0,1,0
+2000000002,V02,0,1,1,1,1,0
+2000000002,V03,1,0,0,0,0,0
