@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -74,4 +75,16 @@ def make_synthetic_imu_parquet(path: Path) -> None:
         ).T
     )
     df.columns = columns
-    df.to_parquet(path, index=False)
+
+    con = duckdb.connect()
+    try:
+        con.register("synthetic_imu", df)
+        con.execute(
+            """
+            COPY synthetic_imu
+            TO $output_path (FORMAT parquet)
+            """,
+            {"output_path": str(path)},
+        )
+    finally:
+        con.close()
