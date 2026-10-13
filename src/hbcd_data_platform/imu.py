@@ -143,56 +143,103 @@ def validate_imu_schema(path: Path) -> dict:
     }
 
 
-def summarize_accel_x_qc(path: Path, threshold: float) -> dict:
+def summarize_imu_sensor_qc(
+    path: Path,
+    *,
+    accel_saturation_threshold: float,
+    gyro_saturation_threshold: float,
+    accel_measurement_limit: float = 16,
+    gyro_measurement_limit: float = 2000,
+) -> list[dict]:
+    sensor_columns = expected_imu_columns(path)[1:]
 
     if any(
         (
-            threshold <= 0,
-            threshold > 16,
-            math.isnan(threshold),
-            math.isinf(threshold),
+            accel_saturation_threshold <= 0,
+            gyro_saturation_threshold <= 0,
+            accel_measurement_limit <= 0,
+            gyro_measurement_limit <= 0,
+            accel_saturation_threshold > accel_measurement_limit,
+            gyro_saturation_threshold > gyro_measurement_limit,
+            math.isnan(accel_saturation_threshold),
+            math.isinf(accel_saturation_threshold),
+            math.isnan(accel_measurement_limit),
+            math.isinf(accel_measurement_limit),
+            math.isnan(gyro_saturation_threshold),
+            math.isinf(gyro_saturation_threshold),
+            math.isnan(gyro_measurement_limit),
+            math.isinf(gyro_measurement_limit),
         )
     ):
-        raise ValueError(f"invalid threshold: '{threshold}'")
+        raise ValueError(f"invalid threshold: '{accel_saturation_threshold}'")
 
-    expected_columns = expected_imu_columns(path)
-    accel_x_column = next(x for x in expected_columns if "ACCEL_x" in x)
+    aggregate_parts = []
 
-    con = duckdb.connect()
+    for column in sensor_columns:
+        if "ACCEL" in column:
+            limit_param = "$accel_measurement_limit"
+            threshold_param = "$accel_saturation_threshold"
+        else:
+            limit_param = "$gyro_measurement_limit"
+            threshold_param = "$gyro_saturation_threshold"
+
+        aggregate_parts.append(
+            f"""
+            COALESCE(
+                SUM(
+                    CASE WHEN "{column}" IS NULL
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS {column}_null_count,
+            COALESCE(
+                SUM(
+                    CASE WHEN "{column}" >{limit_param}
+                    OR "{column}" < -{limit_param}
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS {column}_out_of_range_count,
+            COALESCE(
+                SUM(
+                    CASE WHEN "{column}" >= {threshold_param}
+                    OR "{column}" <= -{threshold_param}
+                    THEN 1 ELSE 0 END),
+                0
+            ) AS {column}_saturation_count
+            """
+        )
+
     query = f"""
         SELECT
             COUNT(*) AS sample_count,
-            COALESCE(
-                SUM(
-                    CASE WHEN {accel_x_column} IS NULL
-                    THEN 1 ELSE 0 END),
-                0
-            ) AS null_count,
-            COALESCE(
-                SUM(
-                    CASE WHEN {accel_x_column} > 16
-                    OR {accel_x_column} < -16
-                    THEN 1 ELSE 0 END),
-                0
-            ) AS out_of_range_count,
-            COALESCE(
-                SUM(
-                    CASE WHEN {accel_x_column} >= $threshold
-                    OR {accel_x_column} <= -$threshold
-                    THEN 1 ELSE 0 END),
-                0
-            ) AS saturation_count
+            {", ".join(aggregate_parts)}
         FROM read_parquet($input_path)
     """
+
+    con = duckdb.connect()
     try:
-        results = con.execute(
-            query, {"input_path": str(path), "threshold": threshold}
+        row = con.execute(
+            query,
+            {
+                "input_path": str(path),
+                "accel_measurement_limit": accel_measurement_limit,
+                "accel_saturation_threshold": accel_saturation_threshold,
+                "gyro_measurement_limit": gyro_measurement_limit,
+                "gyro_saturation_threshold": gyro_saturation_threshold,
+            },
         ).fetchone()
-        return {
-            "sample_count": results[0],
-            "null_count": results[1],
-            "out_of_range_count": results[2],
-            "saturation_count": results[3],
-        }
+        output = []
+
+        for index, column in enumerate(sensor_columns):
+            offset = 1 + index * 3
+            output.append(
+                {
+                    "column_name": column,
+                    "sample_count": row[0],
+                    "null_count": row[offset],
+                    "out_of_range_count": row[offset+1],
+                    "saturation_count": row[offset+2],
+                }
+            )
+        return output
     finally:
         con.close()

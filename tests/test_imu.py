@@ -7,7 +7,7 @@ import duckdb
 from conftest import make_synthetic_imu_tsv, make_synthetic_imu_parquet
 from hbcd_data_platform.imu import (
     expected_imu_columns,
-    summarize_accel_x_qc,
+    summarize_imu_sensor_qc,
     summarize_imu_timestamps,
     validate_imu_schema,
     validate_imu_timestamps,
@@ -467,24 +467,32 @@ def test_validate_parquet_conversion(tmp_path):
         con.close()
 
 
-@pytest.mark.parametrize("leg", ["Left", "Right"])
-def test_accel_x_qc(tmp_path, leg):
-    filepath = tmp_path / (
-        f"sub-2000000001_ses-V02_task-{leg}LegMovement"
-        "_tracksys-imu_acq-primary_motion.parquet"
-    )
-    make_synthetic_imu_parquet(filepath)
-
-    temporary_threshold = 15.5
-    results = summarize_accel_x_qc(filepath, temporary_threshold)
-
-    assert results["sample_count"] == 200
-    assert results["null_count"] == 0
-    assert results["out_of_range_count"] == 0
-    assert results["saturation_count"] == 0
-
-
-def test_accel_x_qc_single_null(tmp_path):
+@pytest.mark.parametrize(
+    (
+        "accel_col",
+        "accel_x_oor_count",
+        "accel_x_saturation_count",
+        "accel_y_oor_count",
+        "accel_y_saturation_count",
+        "accel_z_oor_count",
+        "accel_z_saturation_count",
+    ),
+    [
+        ("LeftAnkle_ACCEL_x", 2, 2, 0, 0, 0, 0),
+        ("LeftAnkle_ACCEL_y", 0, 0, 2, 2, 0, 0),
+        ("LeftAnkle_ACCEL_z", 0, 0, 0, 0, 2, 2),
+    ],
+)
+def test_imu_sensor_qc_over_accel_limit(
+    tmp_path,
+    accel_col,
+    accel_x_oor_count,
+    accel_x_saturation_count,
+    accel_y_oor_count,
+    accel_y_saturation_count,
+    accel_z_oor_count,
+    accel_z_saturation_count,
+):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
@@ -499,57 +507,18 @@ def test_accel_x_qc_single_null(tmp_path):
         )
 
         con.execute(
-            """
+            f"""
             UPDATE imu_test
-            SET LeftAnkle_ACCEL_x = $value
-            WHERE imu_latency = $timestamp
-            """,
-            {"value": None, "timestamp": 4.0},
-        )
-
-        con.execute(
-            "COPY imu_test TO $output_path (FORMAT parquet)",
-            {"output_path": str(filepath)},
-        )
-    finally:
-        con.close()
-
-    temporary_threshold = 15.5
-    results = summarize_accel_x_qc(filepath, temporary_threshold)
-
-    assert results["sample_count"] == 200
-    assert results["null_count"] == 1
-    assert results["out_of_range_count"] == 0
-    assert results["saturation_count"] == 0
-
-
-def test_accel_x_qc_over_limit(tmp_path):
-    filepath = (
-        tmp_path
-        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
-    )
-    make_synthetic_imu_parquet(filepath)
-
-    con = duckdb.connect()
-    try:
-        con.execute(
-            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
-            [str(filepath)],
-        )
-
-        con.execute(
-            """
-            UPDATE imu_test
-            SET LeftAnkle_ACCEL_x = $value
+            SET {accel_col} = $value
             WHERE imu_latency = $timestamp
             """,
             {"value": 16.1, "timestamp": 4.0},
         )
 
         con.execute(
-            """
+            f"""
             UPDATE imu_test
-            SET LeftAnkle_ACCEL_x = $value
+            SET {accel_col} = $value
             WHERE imu_latency = $timestamp
             """,
             {"value": -16.1, "timestamp": 6.0},
@@ -562,23 +531,214 @@ def test_accel_x_qc_over_limit(tmp_path):
     finally:
         con.close()
 
-    temporary_threshold = 15.5
-    results = summarize_accel_x_qc(filepath, temporary_threshold)
+    results = summarize_imu_sensor_qc(
+        filepath, accel_saturation_threshold=15.5, gyro_saturation_threshold=1900
+    )
 
-    assert results["sample_count"] == 200
-    assert results["null_count"] == 0
-    assert results["out_of_range_count"] == 2
-    assert results["saturation_count"] == 2
+    assert results[0]["sample_count"] == 200
+    assert results[0]["null_count"] == 0
+    assert results[0]["out_of_range_count"] == accel_x_oor_count
+    assert results[0]["saturation_count"] == accel_x_saturation_count
+    assert results[1]["sample_count"] == 200
+    assert results[1]["null_count"] == 0
+    assert results[1]["out_of_range_count"] == accel_y_oor_count
+    assert results[1]["saturation_count"] == accel_y_saturation_count
+    assert results[2]["sample_count"] == 200
+    assert results[2]["null_count"] == 0
+    assert results[2]["out_of_range_count"] == accel_z_oor_count
+    assert results[2]["saturation_count"] == accel_z_saturation_count
 
 
 @pytest.mark.parametrize(
-    ("limit", "expected_count"),
+    (
+        "gyro_col",
+        "gyro_x_oor_count",
+        "gyro_x_saturation_count",
+        "gyro_y_oor_count",
+        "gyro_y_saturation_count",
+        "gyro_z_oor_count",
+        "gyro_z_saturation_count",
+    ),
     [
-        ([15.5, -15.5], 2),
-        ([15.49, -15.49], 0),
+        ("LeftAnkle_GYRO_x", 2, 2, 0, 0, 0, 0),
+        ("LeftAnkle_GYRO_y", 0, 0, 2, 2, 0, 0),
+        ("LeftAnkle_GYRO_z", 0, 0, 0, 0, 2, 2),
     ],
 )
-def test_accel_x_qc_at_saturation_limit(tmp_path, limit, expected_count):
+def test_imu_sensor_qc_over_gyro_limit(
+    tmp_path,
+    gyro_col,
+    gyro_x_oor_count,
+    gyro_x_saturation_count,
+    gyro_y_oor_count,
+    gyro_y_saturation_count,
+    gyro_z_oor_count,
+    gyro_z_saturation_count,
+):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {gyro_col} = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": 2000.1, "timestamp": 4.0},
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {gyro_col} = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": -2000.1, "timestamp": 6.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    results = summarize_imu_sensor_qc(
+        filepath, accel_saturation_threshold=15.5, gyro_saturation_threshold=1900
+    )
+
+    assert results[3]["sample_count"] == 200
+    assert results[3]["null_count"] == 0
+    assert results[3]["out_of_range_count"] == gyro_x_oor_count
+    assert results[3]["saturation_count"] == gyro_x_saturation_count
+    assert results[4]["sample_count"] == 200
+    assert results[4]["null_count"] == 0
+    assert results[4]["out_of_range_count"] == gyro_y_oor_count
+    assert results[4]["saturation_count"] == gyro_y_saturation_count
+    assert results[5]["sample_count"] == 200
+    assert results[5]["null_count"] == 0
+    assert results[5]["out_of_range_count"] == gyro_z_oor_count
+    assert results[5]["saturation_count"] == gyro_z_saturation_count
+
+
+@pytest.mark.parametrize("leg", ["Left", "Right"])
+def test_summarize_imu_sensor_qc(tmp_path, leg):
+    filepath = tmp_path / (
+        f"sub-2000000001_ses-V02_task-{leg}LegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+    output = summarize_imu_sensor_qc(
+        filepath, accel_saturation_threshold=15.5, gyro_saturation_threshold=1900
+    )
+
+    assert len(output) == 6
+    assert output[0]["column_name"] == f"{leg}Ankle_ACCEL_x"
+    assert output[0]["sample_count"] == 200
+    assert output[0]["null_count"] == 0
+    assert output[0]["out_of_range_count"] == 0
+    assert output[0]["saturation_count"] == 0
+    assert output[1]["column_name"] == f"{leg}Ankle_ACCEL_y"
+    assert output[1]["sample_count"] == 200
+    assert output[1]["null_count"] == 0
+    assert output[1]["out_of_range_count"] == 0
+    assert output[1]["saturation_count"] == 0
+    assert output[2]["column_name"] == f"{leg}Ankle_ACCEL_z"
+    assert output[2]["sample_count"] == 200
+    assert output[2]["null_count"] == 0
+    assert output[2]["out_of_range_count"] == 0
+    assert output[2]["saturation_count"] == 0
+    assert output[3]["column_name"] == f"{leg}Ankle_GYRO_x"
+    assert output[3]["sample_count"] == 200
+    assert output[3]["null_count"] == 0
+    assert output[3]["out_of_range_count"] == 0
+    assert output[3]["saturation_count"] == 0
+    assert output[4]["column_name"] == f"{leg}Ankle_GYRO_y"
+    assert output[4]["sample_count"] == 200
+    assert output[4]["null_count"] == 0
+    assert output[4]["out_of_range_count"] == 0
+    assert output[4]["saturation_count"] == 0
+    assert output[5]["column_name"] == f"{leg}Ankle_GYRO_z"
+    assert output[5]["sample_count"] == 200
+    assert output[5]["null_count"] == 0
+    assert output[5]["out_of_range_count"] == 0
+    assert output[5]["saturation_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("accel_col", "x_null_count", "y_null_count"),
+    [
+        ("LeftAnkle_ACCEL_x", 1, 0),
+        ("LeftAnkle_ACCEL_y", 0, 1),
+    ],
+)
+def test_summarize_imu_sensor_qc_single_null(
+    tmp_path, accel_col, x_null_count, y_null_count
+):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {accel_col} = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": None, "timestamp": 4.0},
+        )
+
+        con.execute(
+            """
+            UPDATE imu_test
+            SET LeftAnkle_ACCEL_y = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": 16.1, "timestamp": 6.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    output = summarize_imu_sensor_qc(
+        filepath,
+        accel_saturation_threshold=15.5,
+        gyro_saturation_threshold=1900,
+    )
+
+    assert output[0]["sample_count"] == 200
+    assert output[0]["null_count"] == x_null_count
+    assert output[0]["out_of_range_count"] == 0
+    assert output[0]["saturation_count"] == 0
+    assert output[1]["sample_count"] == 200
+    assert output[1]["null_count"] == y_null_count
+    assert output[1]["out_of_range_count"] == 1
+    assert output[1]["saturation_count"] == 1
+
+
+def test_summarize_imu_sensor_qc_z_axis(tmp_path):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
@@ -595,19 +755,19 @@ def test_accel_x_qc_at_saturation_limit(tmp_path, limit, expected_count):
         con.execute(
             """
             UPDATE imu_test
-            SET LeftAnkle_ACCEL_x = $value
+            SET LeftAnkle_ACCEL_z = $value
             WHERE imu_latency = $timestamp
             """,
-            {"value": limit[0], "timestamp": 4.0},
+            {"value": None, "timestamp": 4.0},
         )
 
         con.execute(
             """
             UPDATE imu_test
-            SET LeftAnkle_ACCEL_x = $value
+            SET LeftAnkle_ACCEL_z = $value
             WHERE imu_latency = $timestamp
             """,
-            {"value": limit[1], "timestamp": 6.0},
+            {"value": -16.1, "timestamp": 6.0},
         )
 
         con.execute(
@@ -617,31 +777,117 @@ def test_accel_x_qc_at_saturation_limit(tmp_path, limit, expected_count):
     finally:
         con.close()
 
-    temporary_threshold = 15.5
-    results = summarize_accel_x_qc(filepath, temporary_threshold)
+    output = summarize_imu_sensor_qc(
+        filepath,
+        accel_saturation_threshold=15.5,
+        gyro_saturation_threshold=1900,
+    )
 
-    assert results["sample_count"] == 200
-    assert results["null_count"] == 0
-    assert results["out_of_range_count"] == 0
-    assert results["saturation_count"] == expected_count
+    assert output[0]["sample_count"] == 200
+    assert output[0]["null_count"] == 0
+    assert output[0]["out_of_range_count"] == 0
+    assert output[0]["saturation_count"] == 0
+    assert output[1]["sample_count"] == 200
+    assert output[1]["null_count"] == 0
+    assert output[1]["out_of_range_count"] == 0
+    assert output[1]["saturation_count"] == 0
+    assert output[2]["sample_count"] == 200
+    assert output[2]["null_count"] == 1
+    assert output[2]["out_of_range_count"] == 1
+    assert output[2]["saturation_count"] == 1
 
 
 @pytest.mark.parametrize(
-    "threshold",
-    [0, -1, 16.1, float("nan"), float("inf"), float("-inf")],
+    (
+        "gyro_col",
+        "x_null_count",
+        "y_null_count",
+        "z_null_count",
+        "x_oor_count",
+        "y_oor_count",
+        "z_oor_count",
+        "x_saturation_count",
+        "y_saturation_count",
+        "z_saturation_count",
+    ),
+    [
+        ("LeftAnkle_GYRO_x", 1, 0, 0, 1, 0, 0, 1, 0, 0),
+        ("LeftAnkle_GYRO_y", 0, 1, 0, 0, 1, 0, 0, 1, 0),
+        ("LeftAnkle_GYRO_z", 0, 0, 1, 0, 0, 1, 0, 0, 1),
+    ],
 )
-def test_accel_x_qc_rejects_invalid_threshold(tmp_path, threshold):
+def test_summarize_imu_sensor_qc_gyro_single_null(
+    tmp_path,
+    gyro_col,
+    x_null_count,
+    y_null_count,
+    z_null_count,
+    x_oor_count,
+    y_oor_count,
+    z_oor_count,
+    x_saturation_count,
+    y_saturation_count,
+    z_saturation_count,
+):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
     )
     make_synthetic_imu_parquet(filepath)
 
-    with pytest.raises(ValueError, match="invalid threshold"):
-        summarize_accel_x_qc(filepath, threshold)
+    con = duckdb.connect()
+    try:
+        con.execute(
+            "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
+            [str(filepath)],
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {gyro_col} = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": None, "timestamp": 4.0},
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {gyro_col} = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": 2000.1, "timestamp": 6.0},
+        )
+
+        con.execute(
+            "COPY imu_test TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    output = summarize_imu_sensor_qc(
+        filepath,
+        accel_saturation_threshold=15.5,
+        gyro_saturation_threshold=1900,
+    )
+
+    assert output[3]["sample_count"] == 200
+    assert output[3]["null_count"] == x_null_count
+    assert output[3]["out_of_range_count"] == x_oor_count
+    assert output[3]["saturation_count"] == x_saturation_count
+    assert output[4]["sample_count"] == 200
+    assert output[4]["null_count"] == y_null_count
+    assert output[4]["out_of_range_count"] == y_oor_count
+    assert output[4]["saturation_count"] == y_saturation_count
+    assert output[5]["sample_count"] == 200
+    assert output[5]["null_count"] == z_null_count
+    assert output[5]["out_of_range_count"] == z_oor_count
+    assert output[5]["saturation_count"] == z_saturation_count
 
 
-def test_accel_x_qc_returns_zero_counts_for_empty_recording(tmp_path):
+def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_path):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
@@ -667,11 +913,127 @@ def test_accel_x_qc_returns_zero_counts_for_empty_recording(tmp_path):
     finally:
         con.close()
 
-    results = summarize_accel_x_qc(filepath, 15.5)
+    results = summarize_imu_sensor_qc(
+        filepath, accel_saturation_threshold=15.5, gyro_saturation_threshold=1900
+    )
 
-    assert results == {
+    assert results[0] == {
+        "column_name": "LeftAnkle_ACCEL_x",
         "sample_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
     }
+    assert results[1] == {
+        "column_name": "LeftAnkle_ACCEL_y",
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
+    assert results[2] == {
+        "column_name": "LeftAnkle_ACCEL_z",
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
+    assert results[3] == {
+        "column_name": "LeftAnkle_GYRO_x",
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
+    assert results[4] == {
+        "column_name": "LeftAnkle_GYRO_y",
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
+    assert results[5] == {
+        "column_name": "LeftAnkle_GYRO_z",
+        "sample_count": 0,
+        "null_count": 0,
+        "out_of_range_count": 0,
+        "saturation_count": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    [0, -1, 16.1, float("nan"), float("inf"), float("-inf")],
+)
+def test_imu_sensor_qc_rejects_invalid_acceleration_threshold(tmp_path, threshold):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="invalid threshold"):
+        summarize_imu_sensor_qc(
+            filepath,
+            accel_saturation_threshold=threshold,
+            gyro_saturation_threshold=1900,
+        )
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [0, -1, float("nan"), float("inf"), float("-inf")],
+)
+def test_imu_sensor_qc_rejects_invalid_acceleration_limit(tmp_path, limit):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="invalid threshold"):
+        summarize_imu_sensor_qc(
+            filepath,
+            accel_saturation_threshold=15.5,
+            gyro_saturation_threshold=1900,
+            accel_measurement_limit=limit,
+        )
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    [0, -1, 2000.1, -2100.1, float("nan"), float("inf"), float("-inf")],
+)
+def test_imu_sensor_qc_rejects_invalid_gyro_threshold(tmp_path, threshold):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="invalid threshold"):
+        summarize_imu_sensor_qc(
+            filepath,
+            accel_saturation_threshold=15.5,
+            gyro_saturation_threshold=threshold,
+        )
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [0, -1, float("nan"), float("inf"), float("-inf")],
+)
+def test_imu_sensor_qc_rejects_invalid_gyro_limit(tmp_path, limit):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="invalid threshold"):
+        summarize_imu_sensor_qc(
+            filepath,
+            accel_saturation_threshold=15.5,
+            gyro_saturation_threshold=1900,
+            gyro_measurement_limit=limit,
+        )
