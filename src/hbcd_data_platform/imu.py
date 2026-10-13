@@ -1,9 +1,9 @@
 import csv
 import math
-from pathlib import Path
 import re
-
 from collections import Counter
+from pathlib import Path
+
 import duckdb
 
 
@@ -198,6 +198,7 @@ def summarize_imu_sensor_qc(
 
         aggregate_parts.append(
             f"""
+            COUNT(*) FILTER (WHERE isnan("{column}")) AS {column}_nan_count,
             COALESCE(
                 SUM(
                     CASE WHEN "{column}" IS NULL
@@ -226,7 +227,6 @@ def summarize_imu_sensor_qc(
     query = f"""
         SELECT
             COUNT(*) AS sample_count,
-            COUNT(*) FILTER (WHERE isnan("{column}")) AS {column}_nan_count,
             {", ".join(aggregate_parts)}
         FROM read_parquet($input_path)
     """
@@ -246,7 +246,7 @@ def summarize_imu_sensor_qc(
         output = []
 
         for index, column in enumerate(sensor_columns):
-            offset = 2 + index * 3 
+            offset = 2 + index * 4 
             output.append(
                 {
                     "column_name": column,
@@ -257,5 +257,66 @@ def summarize_imu_sensor_qc(
                 }
             )
         return output
+    finally:
+        con.close()
+
+
+def summarize_imu_windows(
+    path,
+    *,
+    window_seconds=2.0,
+) -> list[dict]:
+
+    columns = expected_imu_columns(path)
+
+    if window_seconds <= 0 or not math.isfinite(window_seconds):
+        raise ValueError(f"Invalid window_seconds: '{window_seconds}'")
+
+    query = f"""
+        WITH sample AS (
+            SELECT
+                FLOOR(imu_latency / $window_seconds) AS window_index,
+                SQRT(
+                    POW({columns[1]}, 2) + POW({columns[2]}, 2) + POW({columns[3]}, 2)
+                ) AS accel_magnitude,
+                SQRT(
+                    POW({columns[4]}, 2) + POW({columns[5]}, 2) + POW({columns[6]}, 2)
+                ) AS gyro_magnitude
+            FROM read_parquet($path)
+        ),
+        window_stats AS (
+            SELECT
+                window_index,
+                COUNT(*) AS sample_count,
+                COUNT(accel_magnitude) AS valid_accel_count,
+                COUNT(gyro_magnitude) AS valid_gyro_count,
+                VAR_POP(accel_magnitude) AS accel_magnitude_variance,
+                VAR_POP(gyro_magnitude) AS gyro_magnitude_variance
+            FROM sample
+            GROUP BY window_index
+        )
+        SELECT
+            window_index,
+            window_index * $window_seconds AS window_start,
+            window_index * $window_seconds + $window_seconds AS window_end,
+            sample_count,
+            valid_accel_count,
+            valid_gyro_count,
+            accel_magnitude_variance,
+            gyro_magnitude_variance
+        FROM window_stats
+        ORDER BY window_index;
+    """
+    con = duckdb.connect()
+    try:
+        rows = con.execute(
+            query,
+            {
+                "window_seconds": window_seconds,
+                "path": str(path)
+            }
+        ).fetchall()
+        column_names = [x[0] for x in con.description]
+        return [dict(zip(column_names, row)) for row in rows]
     finally:
         con.close()

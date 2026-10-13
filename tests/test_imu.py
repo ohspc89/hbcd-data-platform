@@ -1,20 +1,25 @@
-import pandas as pd
-from pandas.testing import assert_frame_equal
-import pytest
+from pathlib import Path
 
 import duckdb
+import pandas as pd
+import pytest
+from pandas.testing import assert_frame_equal
 
 from conftest import make_synthetic_imu_tsv, make_synthetic_imu_parquet
 from hbcd_data_platform.imu import (
     expected_imu_columns,
     summarize_imu_sensor_qc,
     summarize_imu_timestamps,
+    summarize_imu_windows,
     validate_imu_schema,
     validate_imu_timestamps,
 )
 
+TEST_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = TEST_DIR.parent
 
-def test_evaluate_tsv(tmp_path):
+
+def test_synthetic_imu_tsv_has_expected_schema_and_values(tmp_path):
 
     for side in ["Left", "Right"]:
         fname = (
@@ -70,7 +75,7 @@ def test_filename_with_invalid_task_raises_value_error(tmp_path):
 
 
 def test_summarize_imu_timestamps_returns_expected_values(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     make_synthetic_imu_tsv(tmp_path / fname)
 
     out = summarize_imu_timestamps(tmp_path / fname)
@@ -94,7 +99,7 @@ def test_file_with_header_only_raises_value_error(tmp_path):
 
 
 def test_normal_sampling_hz(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -103,7 +108,7 @@ def test_normal_sampling_hz(tmp_path):
 
 
 def test_timestamp_summary_detects_missing_sample(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -119,7 +124,7 @@ def test_timestamp_summary_detects_missing_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_out_of_order_sample(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -135,7 +140,7 @@ def test_timestamp_summary_detects_out_of_order_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_duplicate_samples(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -151,7 +156,7 @@ def test_timestamp_summary_detects_duplicate_samples(tmp_path):
 
 
 def test_timestamp_summary_detects_missing_timestamp(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -168,7 +173,7 @@ def test_timestamp_summary_detects_missing_timestamp(tmp_path):
 
 
 def test_timestamp_summary_detects_single_sample(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -185,7 +190,7 @@ def test_timestamp_summary_detects_single_sample(tmp_path):
 
 
 def test_timestamp_summary_detects_different_expected_frequency(tmp_path):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -195,7 +200,7 @@ def test_timestamp_summary_detects_different_expected_frequency(tmp_path):
 
 @pytest.mark.parametrize("expected_hz", [0, -25])
 def test_invalid_expected_frequency_raises_value_error(tmp_path, expected_hz):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -213,7 +218,7 @@ def test_invalid_expected_frequency_raises_value_error(tmp_path, expected_hz):
 def test_timestamp_tolerance_controls_validation_status(
     tmp_path, offset_s, expected_status
 ):
-    fname = f"sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
+    fname = "sub-0001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
     fpath = tmp_path / fname
     make_synthetic_imu_tsv(fpath)
 
@@ -342,7 +347,7 @@ def test_validate_unexpected_column(tmp_path):
     assert out["duplicate_columns"] == []
 
 
-def test_column_names_switched(tmp_path):
+def test_right_column_names_in_a_left_filename_yield_unexpected_columns_and_missing_columns(tmp_path):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
@@ -379,7 +384,7 @@ def test_column_names_switched(tmp_path):
     assert out["duplicate_columns"] == []
 
 
-def test_column_names_shuffled(tmp_path):
+def test_shuffling_column_names_does_not_affect_schema(tmp_path):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
@@ -1037,3 +1042,52 @@ def test_imu_sensor_qc_rejects_invalid_gyro_limit(tmp_path, limit):
             gyro_saturation_threshold=1900,
             gyro_measurement_limit=limit,
         )
+
+
+@pytest.mark.parametrize("leg", ["Left", "Right"])
+def test_summarize_imu_windows_segments_25hz_recording(tmp_path, leg):
+    fs = 25
+    window_length = 2
+    filepath = tmp_path / (
+        f"sub-2000000001_ses-V02_task-{leg}LegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    out = summarize_imu_windows(filepath, window_seconds=window_length)
+    assert len(out) == 4
+    assert [out[k]["window_index"] for k in range(len(out))] == list(range(len(out)))
+    assert [out[k]["window_start"] for k in range(len(out))] == [window_length * x for x in range(len(out))]
+    assert [out[k]["window_end"] for k in range(len(out))] == [window_length + window_length * x for x in range(len(out))]
+    assert [out[k]["sample_count"] for k in range(len(out))] == [window_length * fs] * len(out)
+
+
+def test_summarize_imu_windows_expected_variance(tmp_path):
+    filepath = tmp_path / (
+        "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+
+    con = duckdb.connect()
+    # Synthetic 2-second recording at 25Hz, so there's only one window
+    try:
+        con.execute(
+            """
+            CREATE TEMP TABLE synthetic_imu AS
+            SELECT *
+            FROM read_csv(?)
+            """,
+            [str(TEST_DIR / "fixtures/sample_data.csv")],
+        )
+
+        con.execute(
+            "COPY synthetic_imu TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    out = summarize_imu_windows(filepath)
+    assert len(out) == 1
+    # Expected values independently calculated from the synthetic CSV
+    # using population variance (ddof=0) of the 3-axis vector magnitude.
+    assert out[0]["accel_magnitude_variance"] == pytest.approx(0.9833279297699248)
+    assert out[0]["gyro_magnitude_variance"] == pytest.approx(757.6538582523282)
