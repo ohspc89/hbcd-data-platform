@@ -67,8 +67,11 @@ def validate_imu_timestamps(
     expected_hz: float = 25.0,
     tolerance_s: float = 1e-6,
 ) -> dict:
-    if expected_hz <= 0:
-        raise ValueError("expected_hz must be greater than zero")
+    if not math.isfinite(expected_hz) or expected_hz <= 0:
+        raise ValueError("expected_hz must be finite and greater than zero")
+
+    if not math.isfinite(tolerance_s) or tolerance_s < 0:
+        raise ValueError("tolerance_s must be finite and nonnegative")
 
     summary = summarize_imu_timestamps(path)
     expected_interval_s = 1 / expected_hz
@@ -82,8 +85,18 @@ def validate_imu_timestamps(
         and summary["interval_count"] == summary["sample_count"] - 1
         and min_interval is not None
         and max_interval is not None
-        and math.isclose(min_interval, expected_interval_s, abs_tol=tolerance_s)
-        and math.isclose(max_interval, expected_interval_s, abs_tol=tolerance_s)
+        and math.isclose(
+            min_interval,
+            expected_interval_s,
+            rel_tol=0.0,
+            abs_tol=tolerance_s
+            )
+        and math.isclose(
+            max_interval,
+            expected_interval_s,
+            rel_tol=0.0,
+            abs_tol=tolerance_s
+            )
     )
 
     return {
@@ -193,15 +206,17 @@ def summarize_imu_sensor_qc(
             ) AS {column}_null_count,
             COALESCE(
                 SUM(
-                    CASE WHEN "{column}" >{limit_param}
-                    OR "{column}" < -{limit_param}
+                    CASE WHEN NOT isnan("{column}")
+                    AND ("{column}" >{limit_param}
+                    OR "{column}" < -{limit_param})
                     THEN 1 ELSE 0 END),
                 0
             ) AS {column}_out_of_range_count,
             COALESCE(
                 SUM(
-                    CASE WHEN "{column}" >= {threshold_param}
-                    OR "{column}" <= -{threshold_param}
+                    CASE WHEN NOT isnan("{column}")
+                    AND ("{column}" >= {threshold_param}
+                    OR "{column}" <= -{threshold_param})
                     THEN 1 ELSE 0 END),
                 0
             ) AS {column}_saturation_count
@@ -211,6 +226,7 @@ def summarize_imu_sensor_qc(
     query = f"""
         SELECT
             COUNT(*) AS sample_count,
+            COUNT(*) FILTER (WHERE isnan("{column}")) AS {column}_nan_count,
             {", ".join(aggregate_parts)}
         FROM read_parquet($input_path)
     """
@@ -230,7 +246,7 @@ def summarize_imu_sensor_qc(
         output = []
 
         for index, column in enumerate(sensor_columns):
-            offset = 1 + index * 3
+            offset = 2 + index * 3 
             output.append(
                 {
                     "column_name": column,

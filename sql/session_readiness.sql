@@ -20,24 +20,28 @@ WITH queried AS (
         BOOL_OR(extension='.tsv' AND suffix='scans') AS has_scans,
         BOOL_OR(
             task='LeftLegMovement'
+            AND tracking_system='imu'
             AND acquisition='primary'
             AND suffix='motion'
             AND extension='.tsv'
         ) AS has_left_primary,
         BOOL_OR(
             task='RightLegMovement'
+            AND tracking_system='imu'
             AND acquisition='primary'
             AND suffix='motion'
             AND extension='.tsv'
         ) AS has_right_primary,
         BOOL_OR(
             task='LeftLegMovement'
+            AND tracking_system='imu'
             AND acquisition='calibration'
             AND suffix='motion'
             AND extension='.tsv'
         ) AS has_left_calibration,
         BOOL_OR(
             task='RightLegMovement'
+            AND tracking_system='imu'
             AND acquisition='calibration'
             AND suffix='motion'
             AND extension='.tsv'
