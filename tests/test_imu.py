@@ -1091,3 +1091,99 @@ def test_summarize_imu_windows_expected_variance(tmp_path):
     # using population variance (ddof=0) of the 3-axis vector magnitude.
     assert out[0]["accel_magnitude_variance"] == pytest.approx(0.9833279297699248)
     assert out[0]["gyro_magnitude_variance"] == pytest.approx(757.6538582523282)
+
+
+def test_summarize_imu_windows_returning_stats_with_null_entries(tmp_path):
+    filepath = tmp_path / (
+        "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+
+    con = duckdb.connect()
+    # Synthetic 2-second recording at 25Hz, so there's only one window
+    try:
+        con.execute(
+            """
+            CREATE TEMP TABLE synthetic_imu AS
+            SELECT *
+            FROM read_csv(?)
+            """,
+            [str(TEST_DIR / "fixtures/sample_data.csv")],
+        )
+
+        con.execute(
+            """
+            UPDATE synthetic_imu
+            SET LeftAnkle_ACCEL_x = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": None, "timestamp": 0.4},
+        )
+
+        con.execute(
+            """
+            UPDATE synthetic_imu
+            SET LeftAnkle_GYRO_y = $value
+            WHERE imu_latency = $timestamp
+            """,
+            {"value": None, "timestamp": 0.8},
+        )
+
+        con.execute(
+            "COPY synthetic_imu TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    out = summarize_imu_windows(filepath)
+    
+    assert len(out) == 1
+    assert out[0]["window_index"] == 0
+    assert out[0]["sample_count"] == 50
+    assert out[0]["valid_accel_count"] == 49 
+    assert out[0]["valid_gyro_count"] == 49 
+    assert out[0]["accel_magnitude_variance"] == pytest.approx(0.998947575916319)
+    assert out[0]["gyro_magnitude_variance"] == pytest.approx(757.3383006270669)
+
+
+def test_summarize_imu_windows_returns_empty_list_with_empty_recording(tmp_path):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    con = duckdb.connect()
+    try:
+        con.execute(
+            """
+            CREATE TEMP TABLE empty_imu AS
+            SELECT *
+            FROM read_parquet(?)
+            WHERE FALSE;
+            """,
+            [str(filepath)],
+        )
+
+        con.execute(
+            "COPY empty_imu TO $output_path (FORMAT parquet)",
+            {"output_path": str(filepath)},
+        )
+    finally:
+        con.close()
+
+    out = summarize_imu_windows(filepath)
+
+    assert out == []
+
+
+@pytest.mark.parametrize("duration", [0, -1, -0.5])
+def test_summarize_imu_windows_raises_value_error_with_invalid_window_duration(tmp_path, duration):
+    filepath = (
+        tmp_path
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    with pytest.raises(ValueError, match="Invalid window_seconds"):
+        summarize_imu_windows(filepath, window_seconds=duration)
