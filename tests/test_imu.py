@@ -7,13 +7,16 @@ from pandas.testing import assert_frame_equal
 
 from conftest import make_synthetic_imu_tsv, make_synthetic_imu_parquet
 from hbcd_data_platform.imu import (
+    create_imu_window_summary_table,
     expected_imu_columns,
+    replace_imu_window_summaries,
     summarize_imu_sensor_qc,
     summarize_imu_timestamps,
     summarize_imu_windows,
     validate_imu_schema,
     validate_imu_timestamps,
 )
+from hbcd_data_platform.load_manifest import load_manifest
 
 TEST_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TEST_DIR.parent
@@ -1187,3 +1190,260 @@ def test_summarize_imu_windows_raises_value_error_with_invalid_window_duration(t
 
     with pytest.raises(ValueError, match="Invalid window_seconds"):
         summarize_imu_windows(filepath, window_seconds=duration)
+
+
+def test_create_imu_window_summary_table_generates_valid_table(tmp_path):
+    rawpath = TEST_DIR / "fixtures/rawdata"
+    db_path = tmp_path / "test.duckdb"
+    
+    load_manifest(rawpath, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        # file_id present
+        valid_file_ids = con.execute("SELECT file_id FROM file_manifest LIMIT 2;").fetchall()
+
+        # 1. if you run the function, it will create a table: `imu_window_summary`
+        create_imu_window_summary_table(con)
+
+        assert con.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_name = 'imu_window_summary';
+            """
+        ).fetchone()[0] == 1
+        # 2. Re-call the same function, no error
+        create_imu_window_summary_table(con)
+
+        # 3. same (file_id, window_index) inserted twice, constraint violation error
+        con.execute(
+            """
+            INSERT INTO imu_window_summary VALUES
+            ($sample_file_id, 1, 0.0, 2.0, 50, 50, 50, 0.01, 100),
+            """,
+            {"sample_file_id": valid_file_ids[0][0]},
+        )
+        with pytest.raises(duckdb.ConstraintException, match="Duplicate key"):
+            con.execute(
+                """
+                INSERT INTO imu_window_summary VALUES
+                ($sample_file_id, 1, 0.0, 2.0, 50, 50, 50, 0.97, 250);
+                """,
+                {"sample_file_id": valid_file_ids[0][0]},
+            )
+
+        # 4. If you insert using a file_id that does not exist in file_manifest,
+        # foreign key violation error
+        invalid_file_id = con.execute(
+            "SELECT COALESCE(MAX(file_id), 0) + 1 FROM file_manifest"
+        ).fetchone()[0]
+
+        with pytest.raises(duckdb.ConstraintException, match="(?i)foreign key"):
+            con.execute(
+                """
+                INSERT INTO imu_window_summary VALUES
+                ($invalid_file_id, 1, 0.0, 2.0, 50, 50, 50, 0.01, 100),
+                """,
+                {"invalid_file_id": invalid_file_id},
+            )
+
+        # 5. You can save NULL in Variance column
+        con.execute(
+            """
+            INSERT INTO imu_window_summary VALUES 
+            ($sample_file_id, 1, 0.0, 2.0, 50, 50, 50, NULL, NULL)
+            """,
+            {"sample_file_id": valid_file_ids[1][0]},
+        )
+
+        null_var = con.execute(
+            """
+            SELECT accel_magnitude_variance, gyro_magnitude_variance
+            FROM imu_window_summary
+            WHERE window_index = 1 AND
+            file_id = $sample_file_id;
+            """,
+            {"sample_file_id": valid_file_ids[1][0]},
+        ).fetchone()
+
+        assert null_var[0] is None
+        assert null_var[1] is None
+
+    finally:
+        con.close()
+
+
+def test_replace_imu_window_summaries(tmp_path):
+    rawpath = TEST_DIR / "fixtures/rawdata"
+    db_path = tmp_path / "test.duckdb"
+    
+    load_manifest(rawpath, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        # make imu_window_summary table
+        create_imu_window_summary_table(con)
+
+        # file_id present
+        valid_file_ids = con.execute(
+            """
+            SELECT file_id
+            FROM file_manifest ORDER BY file_id LIMIT 2;
+            """).fetchall()
+        valid_file_ids = [x[0] for x in valid_file_ids]
+
+        # So this will create two rows.
+        replace_imu_window_summaries(
+            con,
+            valid_file_ids[0],
+            [
+                {
+                    'window_index': 1,
+                    'window_start': 0.0,
+                    'window_end': 2.0,
+                    'sample_count': 50,
+                    'valid_accel_count': 50,
+                    'valid_gyro_count': 50,
+                    'accel_magnitude_variance': 0.79,
+                    'gyro_magnitude_variance': 217,
+                },
+                {
+                    'window_index': 2,
+                    'window_start': 2.0,
+                    'window_end': 4.0,
+                    'sample_count': 50,
+                    'valid_accel_count': 50,
+                    'valid_gyro_count': 50,
+                    'accel_magnitude_variance': 1.23,
+                    'gyro_magnitude_variance': 327,
+                },
+             ]
+        )
+
+        # Maybe test whether a summary with a different file_id
+        # survives the replacement
+        replace_imu_window_summaries(
+            con,
+            valid_file_ids[1],
+            [
+                {
+                    'window_index': 1,
+                    'window_start': 0.0,
+                    'window_end': 2.0,
+                    'sample_count': 50,
+                    'valid_accel_count': 50,
+                    'valid_gyro_count': 50,
+                    'accel_magnitude_variance': 0.99,
+                    'gyro_magnitude_variance': 343,
+                },
+             ]
+        )
+
+        # Testing normal functioning
+        result1 = con.execute(
+            "SELECT * FROM imu_window_summary ORDER BY file_id, window_index;"
+        ).fetchall()
+        assert result1[0] == (valid_file_ids[0], 1, 0.0, 2.0, 50, 50, 50, 0.79, 217)
+        assert result1[1] == (valid_file_ids[0], 2, 2.0, 4.0, 50, 50, 50, 1.23, 327)
+        assert result1[2] == (valid_file_ids[1], 1, 0.0, 2.0, 50, 50, 50, 0.99, 343)
+
+        # Re-calling, values replaced
+        replace_imu_window_summaries(
+            con,
+            valid_file_ids[0],
+            [
+                {
+                    'window_index': 1,
+                    'window_start': 0.0,
+                    'window_end': 2.0,
+                    'sample_count': 50,
+                    'valid_accel_count': 50,
+                    'valid_gyro_count': 50,
+                    'accel_magnitude_variance': None,
+                    'gyro_magnitude_variance': None, 
+                }
+             ]
+        )
+        # Previous entry deleted & entry with a different file_id not affected
+        assert con.execute(
+            "SELECT COUNT(*) FROM imu_window_summary"
+        ).fetchone()[0] == 2
+
+        # None detected
+        variances = con.execute(
+            """
+            SELECT
+                accel_magnitude_variance, gyro_magnitude_variance
+            FROM imu_window_summary
+            WHERE file_id = $file_id;
+            """,
+            {'file_id': valid_file_ids[0]},
+        ).fetchall()
+        assert variances[0][0] is None
+        assert variances[0][1] is None
+
+        # Empty list?
+        replace_imu_window_summaries(
+            con,
+            valid_file_ids[0],
+            []
+        )
+
+        # So again, this will erase entries with valid_file_ids[0], not valid_file_ids[1]
+        result2 = con.execute("SELECT * FROM imu_window_summary;").fetchall()[0]
+        assert result2 == (valid_file_ids[1], 1, 0.0, 2.0, 50, 50, 50, 0.99, 343)
+
+        # Insert something first.
+        replace_imu_window_summaries(
+            con,
+            valid_file_ids[1],
+            [
+                {
+                    'window_index': 1,
+                    'window_start': 0.0,
+                    'window_end': 2.0,
+                    'sample_count': 50,
+                    'valid_accel_count': 50,
+                    'valid_gyro_count': 50,
+                    'accel_magnitude_variance': 0.47,
+                    'gyro_magnitude_variance': 138, 
+                }
+             ]
+        )
+
+        # Then put something that violates the rule.
+        with pytest.raises(duckdb.ConstraintException):
+            replace_imu_window_summaries(
+                con,
+                valid_file_ids[1],
+                [
+                    {
+                        'window_index': 1,
+                        'window_start': 0.0,
+                        'window_end': 2.0,
+                        'sample_count': 50,
+                        'valid_accel_count': 50,
+                        'valid_gyro_count': 50,
+                        'accel_magnitude_variance': 1.11,
+                        'gyro_magnitude_variance': 192, 
+                    },
+                    {
+                        'window_index': 2,
+                        'window_start': 2.0,
+                        'window_end': None,
+                        'sample_count': 50,
+                        'valid_accel_count': 50,
+                        'valid_gyro_count': 50,
+                        'accel_magnitude_variance': 2.01,
+                        'gyro_magnitude_variance': 382, 
+                    }
+                 ]
+            )
+
+        table_values = con.execute("SELECT * FROM imu_window_summary").fetchall()[0]
+        assert table_values == (valid_file_ids[1], 1, 0.0, 2.0, 50, 50, 50, 0.47, 138)
+
+
+    finally:
+        con.close()

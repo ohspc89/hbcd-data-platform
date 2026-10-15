@@ -320,3 +320,85 @@ def summarize_imu_windows(
         return [dict(zip(column_names, row)) for row in rows]
     finally:
         con.close()
+
+
+def create_imu_window_summary_table(con: duckdb.DuckDBPyConnection) -> None:
+    # `con` should already have 'file_manifest' table in it
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS imu_window_summary (
+            file_id BIGINT,
+            window_index BIGINT,
+            window_start DOUBLE NOT NULL,
+            window_end DOUBLE NOT NULL,
+            sample_count INTEGER NOT NULL,
+            valid_accel_count INTEGER NOT NULL,
+            valid_gyro_count INTEGER NOT NULL,
+            accel_magnitude_variance DOUBLE,
+            gyro_magnitude_variance DOUBLE,
+
+            PRIMARY KEY (file_id, window_index),
+
+            FOREIGN KEY (file_id)
+                REFERENCES file_manifest(file_id)
+        )
+        """
+    )
+
+
+def replace_imu_window_summaries(
+    con: duckdb.DuckDBPyConnection,
+    file_id: int,
+    summaries: list[dict],
+) -> None:
+    rows = []
+    for summary in summaries:
+        rows.append(
+            (
+                file_id,
+                summary["window_index"],
+                summary["window_start"],
+                summary["window_end"],
+                summary["sample_count"],
+                summary["valid_accel_count"],
+                summary["valid_gyro_count"],
+                summary["accel_magnitude_variance"],
+                summary["gyro_magnitude_variance"],
+            )
+        )
+
+    con.execute("BEGIN TRANSACTION")
+
+    try:
+        con.execute(
+            """
+            DELETE FROM imu_window_summary
+            WHERE file_id = $file_id
+            """,
+            {"file_id": file_id},
+        )
+
+
+        if rows:
+            con.executemany(
+                """
+                INSERT INTO imu_window_summary (
+                    file_id,
+                    window_index,
+                    window_start,
+                    window_end,
+                    sample_count,
+                    valid_accel_count,
+                    valid_gyro_count,
+                    accel_magnitude_variance,
+                    gyro_magnitude_variance
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
