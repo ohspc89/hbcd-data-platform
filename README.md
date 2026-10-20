@@ -1,83 +1,91 @@
 # HBCD Data Platform
 
-A Python-based data engineering project for ingesting, cataloging, and validating metadata from BIDS-style infant wearable sensor datasets.
+A Python and DuckDB data engineering portfolio project for discovering, validating, and summarizing BIDS-style infant wearable-sensor data. Inspired by the data-management challenges of the Healthy Brain and Child Development (HBCD) Study.
 
-The project demonstrates reproducible data ingestion, metadata quality control, transactional persistence, and automated testing using Python, DuckDB, pytest, and GitHub Actions.
+**Status:** Work in progress. Metadata ingestion and validation are available through a CLI. IMU time-series QC and window-summary functions are implemented as Python APIs but are not yet connected to the end-to-end CLI.
 
-**Status:** Work in progress
+## Problem and approach
 
-## Motivation
+Large-scale wearable studies produce thousands of participant/session files and large sensor recordings. Reliable analysis requires an auditable file inventory, explicit data-quality rules, and safe reruns after files change or processing fails.
 
-Large-scale wearable sensor studies produce thousands of files across participants, recording sessions, and data modalities. Managing these files reliably requires more than organizing directories: a data platform must track file metadata, detect missing or inconsistent records, and preserve data integrity when processing fails.
+This project keeps raw time-series files on disk and stores file metadata and quality-control results in DuckDB. Its engineering focus is **SQL transformations, idempotent ingestion, transactional persistence, and automated tests**.
 
-This project addresses these challenges through a lightweight, testable metadata pipeline inspired by the Healthy Brain and Child Development (HBCD) Study.
+## Implemented capabilities
 
-The current implementation focuses on file discovery and metadata validation. Raw sensor time-series processing and analytical data models are planned for future development.
-
-**Data privacy:** Real HBCD participant data is not distributed with this repository. Automated tests use synthetic fixtures.
-
-## Features
-
-- File discovery: Recursively scans BIDS-style directory structures and extracts metadata from filenames, including participant IDs, session IDs, and acquisition parameters.
-- Idempotent ingestion: Loads file metadata into DuckDB using upserts, preventing duplicate records and updating existing entries across repeated scans.
-- Metadata validation: Checks for required participant-level `_sessions.tsv` and session-level `_scans.tsv` files, producing standardized PASS/FAIL
-- Transactional persistence: Atomically replaces QC results using database transactions, rolling back changes if an error occurs during persistence.
+| Component | Functionality |
+| --- | --- |
+| File discovery | Recursively scan BIDS-style paths and parse participant, session, task, tracking-system, acquisition, and suffix metadata. |
+| Manifest ingestion | Upsert by unique relative path, retain first-discovered timestamps, update last-seen timestamps, and delete missing manifest entries. |
+| Metadata validation | Check participant-level `_sessions.tsv` and session-level `_scans.tsv` files; persist PASS/FAIL results. |
+| IMU timestamp QC | Summarize TSV sampling intervals and check expected frequency against a configurable tolerance. |
+| IMU schema QC | Check expected left/right ankle accelerometer and gyroscope columns in TSV files. |
+| IMU sensor QC | Calculate per-axis null, out-of-range, and saturation counts from Parquet recordings. |
+| IMU window summaries | Compute window-level sample counts and population variance of acceleration/gyroscope magnitudes from Parquet. |
+| Transactional persistence | Roll back failed manifest, metadata-validation, or IMU-window-summary replacements. |
+| Automated testing | Exercise synthetic data and failure cases using pytest, temporary DuckDB databases, and GitHub Actions. |
 
 ## Architecture
 
-BIDS-style file system
-         │
-         ▼
-    File scanner
-         │
-         ▼
-  DuckDB file_manifest
-         │
-         ▼
-  Metadata validation
-         │
-         ▼
- DuckDB validation_results
+```text
+BIDS-style directory
+    |
+    v
+Scanner / filename parser
+    |
+    v
+DuckDB: file_manifest ---> metadata validation ---> validation_results
 
-**Design decision — Separating metadata from raw sensor data**
+Parquet IMU file ---> summarize_imu_windows() ---> window summaries
+                                                        |
+                                                        v
+                                             imu_window_summary
+```
 
-The platform stores file metadata and validation results in DuckDB while keeping raw sensor time-series in file-based storage. This separation enables efficient file discovery, filtering, and quality control without repeatedly loading large sensor datasets. Downstream processing pipelines can use the manifest to locate and selectively read relevant files.
+The IMU-processing functions currently operate independently. **Manifest-driven IMU orchestration is not yet implemented.**
 
-## Quick Start
+### Data model
 
-### Prerequisites
+- `file_manifest`: one row per relative path; stable `file_id`, parsed filename metadata, discovery and last-seen timestamps.
+- `validation_results`: participant/session checks, rule, status, observed/expected counts, and validation timestamp.
+- `imu_window_summary`: one row per `(file_id, window_index)` with counts and magnitude variances; foreign key to `file_manifest`.
 
-- Python 3.12 or later (Python 3.12 is the currently tested version)
-- [uv](https://docs.astral.sh/uv/) for Python dependency management
-- Git
+## Getting started
 
-### Installation
-
-Clone the repository:
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Git.
 
 ```bash
-git clone git@github.com:ohspc89/hbcd-data-platform.git
+git clone https://github.com/ohspc89/hbcd-data-platform.git
 cd hbcd-data-platform
+uv sync --locked
+uv run pytest -q
 ```
 
-Install project dependencies:
+To run metadata ingestion and validation against a **BIDS-style directory you control**, keeping the database **outside** the raw-data directory:
 
 ```bash
-uv sync --locked
+uv run hbcd-data-platform run \
+  --raw-path /path/to/bids-data \
+  --db-path /path/to/platform.duckdb
 ```
 
-### Run Tests
+The CLI also exposes `ingest` (same two arguments) and `validate --db-path /path/to/platform.duckdb` (against an existing database).
 
-Execute the automated test suite:
+IMU functions are in `src/hbcd_data_platform/imu.py`, including `summarize_imu_windows()`, `create_imu_window_summary_table()`, and `replace_imu_window_summaries()`.
+
+## Tests and privacy
 
 ```bash
 uv run pytest -q
 ```
 
-Tests use synthetic BIDS-style fixtures and temporary DuckDB databases. Access to the original HBCD dataset is not required.
+Tests cover valid and invalid metadata, timestamp anomalies, malformed sensor data, window boundaries, persistence reruns, and transaction rollback. GitHub Actions runs pytest on pushes and pull requests to `main`.
 
-### Continuous Integration
+**No real HBCD participant recordings or identifiable participant data are distributed with this repository.** Tests use synthetic fixtures.
 
-GitHub Actions automatically runs the test suite on pushes and pull requests targeting the `main` branch.
+## Next engineering milestones
 
-The CI workflow is defined in `.github/workflows/tests.yml`.
+1. **Manifest-driven IMU processing:** Resolve a Parquet file from its manifest record, summarize its windows, and persist by `file_id` without duplicates on rerun.
+2. **Referential integrity:** Handle manifest deletions without leaving orphaned IMU summaries or triggering foreign-key failures.
+3. **Operationalization:** Add IMU processing to the CLI, structured run-level logs, failure recovery, and performance measurements on synthetic workloads.
+
+This is a portfolio and learning project, **not a deployed clinical system**. Production AWS, Snowflake, HL7/FHIR, and HIPAA-compliant infrastructure are not claimed.
