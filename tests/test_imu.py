@@ -3,10 +3,11 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 import pytest
+from conftest import make_synthetic_imu_parquet, make_synthetic_imu_tsv
 from pandas.testing import assert_frame_equal
 
-from conftest import make_synthetic_imu_tsv, make_synthetic_imu_parquet
 from hbcd_data_platform.imu import (
+    create_imu_processing_status_table,
     create_imu_window_summary_table,
     expected_imu_columns,
     replace_imu_window_summaries,
@@ -350,7 +351,9 @@ def test_validate_unexpected_column(tmp_path):
     assert out["duplicate_columns"] == []
 
 
-def test_right_column_names_in_a_left_filename_yield_unexpected_columns_and_missing_columns(tmp_path):
+def test_right_column_names_in_a_left_filename_yield_unexpected_columns_and_missing_columns(
+    tmp_path,
+):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.tsv"
@@ -1059,9 +1062,15 @@ def test_summarize_imu_windows_segments_25hz_recording(tmp_path, leg):
     out = summarize_imu_windows(filepath, window_seconds=window_length)
     assert len(out) == 4
     assert [out[k]["window_index"] for k in range(len(out))] == list(range(len(out)))
-    assert [out[k]["window_start"] for k in range(len(out))] == [window_length * x for x in range(len(out))]
-    assert [out[k]["window_end"] for k in range(len(out))] == [window_length + window_length * x for x in range(len(out))]
-    assert [out[k]["sample_count"] for k in range(len(out))] == [window_length * fs] * len(out)
+    assert [out[k]["window_start"] for k in range(len(out))] == [
+        window_length * x for x in range(len(out))
+    ]
+    assert [out[k]["window_end"] for k in range(len(out))] == [
+        window_length + window_length * x for x in range(len(out))
+    ]
+    assert [out[k]["sample_count"] for k in range(len(out))] == [
+        window_length * fs
+    ] * len(out)
 
 
 def test_summarize_imu_windows_expected_variance(tmp_path):
@@ -1139,12 +1148,12 @@ def test_summarize_imu_windows_returning_stats_with_null_entries(tmp_path):
         con.close()
 
     out = summarize_imu_windows(filepath)
-    
+
     assert len(out) == 1
     assert out[0]["window_index"] == 0
     assert out[0]["sample_count"] == 50
-    assert out[0]["valid_accel_count"] == 49 
-    assert out[0]["valid_gyro_count"] == 49 
+    assert out[0]["valid_accel_count"] == 49
+    assert out[0]["valid_gyro_count"] == 49
     assert out[0]["accel_magnitude_variance"] == pytest.approx(0.998947575916319)
     assert out[0]["gyro_magnitude_variance"] == pytest.approx(757.3383006270669)
 
@@ -1181,7 +1190,9 @@ def test_summarize_imu_windows_returns_empty_list_with_empty_recording(tmp_path)
 
 
 @pytest.mark.parametrize("duration", [0, -1, -0.5])
-def test_summarize_imu_windows_raises_value_error_with_invalid_window_duration(tmp_path, duration):
+def test_summarize_imu_windows_raises_value_error_with_invalid_window_duration(
+    tmp_path, duration
+):
     filepath = (
         tmp_path
         / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
@@ -1195,24 +1206,29 @@ def test_summarize_imu_windows_raises_value_error_with_invalid_window_duration(t
 def test_create_imu_window_summary_table_generates_valid_table(tmp_path):
     rawpath = TEST_DIR / "fixtures/rawdata"
     db_path = tmp_path / "test.duckdb"
-    
+
     load_manifest(rawpath, db_path)
 
     con = duckdb.connect(db_path)
     try:
         # file_id present
-        valid_file_ids = con.execute("SELECT file_id FROM file_manifest LIMIT 2;").fetchall()
+        valid_file_ids = con.execute(
+            "SELECT file_id FROM file_manifest LIMIT 2;"
+        ).fetchall()
 
         # 1. if you run the function, it will create a table: `imu_window_summary`
         create_imu_window_summary_table(con)
 
-        assert con.execute(
-            """
+        assert (
+            con.execute(
+                """
             SELECT COUNT(*)
             FROM information_schema.tables
             WHERE table_name = 'imu_window_summary';
             """
-        ).fetchone()[0] == 1
+            ).fetchone()[0]
+            == 1
+        )
         # 2. Re-call the same function, no error
         create_imu_window_summary_table(con)
 
@@ -1277,20 +1293,21 @@ def test_create_imu_window_summary_table_generates_valid_table(tmp_path):
 def test_replace_imu_window_summaries(tmp_path):
     rawpath = TEST_DIR / "fixtures/rawdata"
     db_path = tmp_path / "test.duckdb"
-    
+
     load_manifest(rawpath, db_path)
 
     con = duckdb.connect(db_path)
     try:
-        # make imu_window_summary table
         create_imu_window_summary_table(con)
+        create_imu_processing_status_table(con)
 
         # file_id present
         valid_file_ids = con.execute(
             """
             SELECT file_id
             FROM file_manifest ORDER BY file_id LIMIT 2;
-            """).fetchall()
+            """
+        ).fetchall()
         valid_file_ids = [x[0] for x in valid_file_ids]
 
         # So this will create two rows.
@@ -1299,26 +1316,26 @@ def test_replace_imu_window_summaries(tmp_path):
             valid_file_ids[0],
             [
                 {
-                    'window_index': 1,
-                    'window_start': 0.0,
-                    'window_end': 2.0,
-                    'sample_count': 50,
-                    'valid_accel_count': 50,
-                    'valid_gyro_count': 50,
-                    'accel_magnitude_variance': 0.79,
-                    'gyro_magnitude_variance': 217,
+                    "window_index": 1,
+                    "window_start": 0.0,
+                    "window_end": 2.0,
+                    "sample_count": 50,
+                    "valid_accel_count": 50,
+                    "valid_gyro_count": 50,
+                    "accel_magnitude_variance": 0.79,
+                    "gyro_magnitude_variance": 217,
                 },
                 {
-                    'window_index': 2,
-                    'window_start': 2.0,
-                    'window_end': 4.0,
-                    'sample_count': 50,
-                    'valid_accel_count': 50,
-                    'valid_gyro_count': 50,
-                    'accel_magnitude_variance': 1.23,
-                    'gyro_magnitude_variance': 327,
+                    "window_index": 2,
+                    "window_start": 2.0,
+                    "window_end": 4.0,
+                    "sample_count": 50,
+                    "valid_accel_count": 50,
+                    "valid_gyro_count": 50,
+                    "accel_magnitude_variance": 1.23,
+                    "gyro_magnitude_variance": 327,
                 },
-             ]
+            ],
         )
 
         # Maybe test whether a summary with a different file_id
@@ -1328,16 +1345,16 @@ def test_replace_imu_window_summaries(tmp_path):
             valid_file_ids[1],
             [
                 {
-                    'window_index': 1,
-                    'window_start': 0.0,
-                    'window_end': 2.0,
-                    'sample_count': 50,
-                    'valid_accel_count': 50,
-                    'valid_gyro_count': 50,
-                    'accel_magnitude_variance': 0.99,
-                    'gyro_magnitude_variance': 343,
+                    "window_index": 1,
+                    "window_start": 0.0,
+                    "window_end": 2.0,
+                    "sample_count": 50,
+                    "valid_accel_count": 50,
+                    "valid_gyro_count": 50,
+                    "accel_magnitude_variance": 0.99,
+                    "gyro_magnitude_variance": 343,
                 },
-             ]
+            ],
         )
 
         # Testing normal functioning
@@ -1354,21 +1371,19 @@ def test_replace_imu_window_summaries(tmp_path):
             valid_file_ids[0],
             [
                 {
-                    'window_index': 1,
-                    'window_start': 0.0,
-                    'window_end': 2.0,
-                    'sample_count': 50,
-                    'valid_accel_count': 50,
-                    'valid_gyro_count': 50,
-                    'accel_magnitude_variance': None,
-                    'gyro_magnitude_variance': None, 
+                    "window_index": 1,
+                    "window_start": 0.0,
+                    "window_end": 2.0,
+                    "sample_count": 50,
+                    "valid_accel_count": 50,
+                    "valid_gyro_count": 50,
+                    "accel_magnitude_variance": None,
+                    "gyro_magnitude_variance": None,
                 }
-             ]
+            ],
         )
         # Previous entry deleted & entry with a different file_id not affected
-        assert con.execute(
-            "SELECT COUNT(*) FROM imu_window_summary"
-        ).fetchone()[0] == 2
+        assert con.execute("SELECT COUNT(*) FROM imu_window_summary").fetchone()[0] == 2
 
         # None detected
         variances = con.execute(
@@ -1378,17 +1393,13 @@ def test_replace_imu_window_summaries(tmp_path):
             FROM imu_window_summary
             WHERE file_id = $file_id;
             """,
-            {'file_id': valid_file_ids[0]},
+            {"file_id": valid_file_ids[0]},
         ).fetchall()
         assert variances[0][0] is None
         assert variances[0][1] is None
 
         # Empty list?
-        replace_imu_window_summaries(
-            con,
-            valid_file_ids[0],
-            []
-        )
+        replace_imu_window_summaries(con, valid_file_ids[0], [])
 
         # So again, this will erase entries with valid_file_ids[0], not valid_file_ids[1]
         result2 = con.execute("SELECT * FROM imu_window_summary;").fetchall()[0]
@@ -1400,16 +1411,16 @@ def test_replace_imu_window_summaries(tmp_path):
             valid_file_ids[1],
             [
                 {
-                    'window_index': 1,
-                    'window_start': 0.0,
-                    'window_end': 2.0,
-                    'sample_count': 50,
-                    'valid_accel_count': 50,
-                    'valid_gyro_count': 50,
-                    'accel_magnitude_variance': 0.47,
-                    'gyro_magnitude_variance': 138, 
+                    "window_index": 1,
+                    "window_start": 0.0,
+                    "window_end": 2.0,
+                    "sample_count": 50,
+                    "valid_accel_count": 50,
+                    "valid_gyro_count": 50,
+                    "accel_magnitude_variance": 0.47,
+                    "gyro_magnitude_variance": 138,
                 }
-             ]
+            ],
         )
 
         # Then put something that violates the rule.
@@ -1419,31 +1430,30 @@ def test_replace_imu_window_summaries(tmp_path):
                 valid_file_ids[1],
                 [
                     {
-                        'window_index': 1,
-                        'window_start': 0.0,
-                        'window_end': 2.0,
-                        'sample_count': 50,
-                        'valid_accel_count': 50,
-                        'valid_gyro_count': 50,
-                        'accel_magnitude_variance': 1.11,
-                        'gyro_magnitude_variance': 192, 
+                        "window_index": 1,
+                        "window_start": 0.0,
+                        "window_end": 2.0,
+                        "sample_count": 50,
+                        "valid_accel_count": 50,
+                        "valid_gyro_count": 50,
+                        "accel_magnitude_variance": 1.11,
+                        "gyro_magnitude_variance": 192,
                     },
                     {
-                        'window_index': 2,
-                        'window_start': 2.0,
-                        'window_end': None,
-                        'sample_count': 50,
-                        'valid_accel_count': 50,
-                        'valid_gyro_count': 50,
-                        'accel_magnitude_variance': 2.01,
-                        'gyro_magnitude_variance': 382, 
-                    }
-                 ]
+                        "window_index": 2,
+                        "window_start": 2.0,
+                        "window_end": None,
+                        "sample_count": 50,
+                        "valid_accel_count": 50,
+                        "valid_gyro_count": 50,
+                        "accel_magnitude_variance": 2.01,
+                        "gyro_magnitude_variance": 382,
+                    },
+                ],
             )
 
         table_values = con.execute("SELECT * FROM imu_window_summary").fetchall()[0]
         assert table_values == (valid_file_ids[1], 1, 0.0, 2.0, 50, 50, 50, 0.47, 138)
-
 
     finally:
         con.close()

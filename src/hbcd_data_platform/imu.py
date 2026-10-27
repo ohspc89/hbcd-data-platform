@@ -86,17 +86,11 @@ def validate_imu_timestamps(
         and min_interval is not None
         and max_interval is not None
         and math.isclose(
-            min_interval,
-            expected_interval_s,
-            rel_tol=0.0,
-            abs_tol=tolerance_s
-            )
+            min_interval, expected_interval_s, rel_tol=0.0, abs_tol=tolerance_s
+        )
         and math.isclose(
-            max_interval,
-            expected_interval_s,
-            rel_tol=0.0,
-            abs_tol=tolerance_s
-            )
+            max_interval, expected_interval_s, rel_tol=0.0, abs_tol=tolerance_s
+        )
     )
 
     return {
@@ -246,14 +240,14 @@ def summarize_imu_sensor_qc(
         output = []
 
         for index, column in enumerate(sensor_columns):
-            offset = 2 + index * 4 
+            offset = 2 + index * 4
             output.append(
                 {
                     "column_name": column,
                     "sample_count": row[0],
                     "null_count": row[offset],
-                    "out_of_range_count": row[offset+1],
-                    "saturation_count": row[offset+2],
+                    "out_of_range_count": row[offset + 1],
+                    "saturation_count": row[offset + 2],
                 }
             )
         return output
@@ -310,16 +304,27 @@ def summarize_imu_windows(
     con = duckdb.connect()
     try:
         rows = con.execute(
-            query,
-            {
-                "window_seconds": window_seconds,
-                "path": str(path)
-            }
+            query, {"window_seconds": window_seconds, "path": str(path)}
         ).fetchall()
         column_names = [x[0] for x in con.description]
         return [dict(zip(column_names, row)) for row in rows]
     finally:
         con.close()
+
+
+def create_imu_processing_status_table(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS imu_processing_status (
+            file_id BIGINT PRIMARY KEY,
+            processed_at TIMESTAMP,
+            processed_size_bytes BIGINT,
+            processed_modified_at TIMESTAMP,
+            FOREIGN KEY (file_id)
+            REFERENCES file_manifest(file_id)
+        );
+        """
+    )
 
 
 def create_imu_window_summary_table(con: duckdb.DuckDBPyConnection) -> None:
@@ -378,7 +383,6 @@ def replace_imu_window_summaries(
             {"file_id": file_id},
         )
 
-
         if rows:
             con.executemany(
                 """
@@ -398,7 +402,38 @@ def replace_imu_window_summaries(
                 rows,
             )
 
+        file_manifest_row = con.execute(
+            """
+            SELECT size_bytes, modified_at
+            FROM file_manifest
+            WHERE file_id = ?
+            """,
+            [file_id],
+        ).fetchone()
+
+        if file_manifest_row is None:
+            raise ValueError(f"file_id={file_id} not found in file_manifest")
+
+        con.execute(
+            """
+            INSERT INTO imu_processing_status (
+                file_id,
+                processed_at,
+                processed_size_bytes,
+                processed_modified_at
+            )
+            VALUES (?, CURRENT_TIMESTAMP, ?, ?)
+            ON CONFLICT(file_id)
+            DO UPDATE SET
+                processed_at = excluded.processed_at,
+                processed_size_bytes = excluded.processed_size_bytes,
+                processed_modified_at = excluded.processed_modified_at
+            """,
+            [file_id, file_manifest_row[0], file_manifest_row[1]],
+        )
+
         con.execute("COMMIT")
+
     except Exception:
         con.execute("ROLLBACK")
         raise

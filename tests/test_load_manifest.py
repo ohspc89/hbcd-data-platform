@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock
+import shutil
 
 import duckdb
 import pandas as pd
@@ -311,7 +312,7 @@ def make_synthetic_sessions_tsv(raw_path, sub=None):
     )
 
 
-def test_deleted_file_is_removed_from_manifest(test_paths):
+def test_deleted_file_is_not_removed_from_manifest(test_paths):
     raw_path, db_path = test_paths
 
     sub = "sub-3911382960"
@@ -325,14 +326,14 @@ def test_deleted_file_is_removed_from_manifest(test_paths):
 
     load_manifest(raw_path, db_path)
 
-    # Check if that file's relative_path does not have a row.
+    # deleted file will still have a row
     con = duckdb.connect(db_path)
     try:
         count = con.execute(
             "SELECT COUNT(*) FROM file_manifest WHERE relative_path = ?;",
             [deleted_relative_path],
         ).fetchone()[0]
-        assert count == 0
+        assert count == 1
 
     finally:
         con.close()
@@ -346,28 +347,74 @@ def test_manifest_rollback_preserves_previous_results(test_paths, monkeypatch):
 
     load_manifest(raw_path, db_path)
 
-    con = duckdb.connect(db_path)
-    try:
+    with duckdb.connect(db_path) as con:
         before = con.sql(
             "SELECT * FROM file_manifest ORDER BY relative_path;"
         ).fetchall()
-    finally:
-        con.close()
+
+    # Add another file that would normally be inserted.
     make_synthetic_sessions_tsv(raw_path, sub="sub-3911382961")
 
-    def fail_delete(con, df):
-        con.sql("DELETE FROM table_that_does_not_exist")
+    original_scan_files = load_manifest_module.scan_files
 
-    monkeypatch.setattr(load_manifest_module, "_delete_missing_files", fail_delete)
+    def scan_with_duplicates(raw_path):
+        records = original_scan_files(raw_path)
 
-    with pytest.raises(duckdb.CatalogException):
+        # Ensure a valid record is processed before the invalid one.
+        records[0]["size_bytes"] = 100
+
+        # Force a BIGINT conversion failure during UPSERT.
+        records[-1]["size_bytes"] = "not_an_integer"
+        return records
+
+    monkeypatch.setattr(load_manifest_module, "scan_files", scan_with_duplicates)
+
+    with pytest.raises(duckdb.ConversionException):
         load_manifest_module.load_manifest(raw_path, db_path)
 
-    con = duckdb.connect(db_path)
-    try:
+    with duckdb.connect(db_path) as con:
         after = con.sql(
             "SELECT * FROM file_manifest ORDER BY relative_path;"
         ).fetchall()
-        assert after == before
-    finally:
-        con.close()
+
+    assert after == before
+
+
+def test_if_is_present_behaves_correctly(test_paths):
+    raw_path, db_path = test_paths
+
+    sub = "sub-3911382960"
+    make_synthetic_sessions_tsv(raw_path, sub=sub)
+
+    load_manifest(raw_path, db_path)
+    deleted_path = raw_path / f"{sub}/{sub}_sessions.tsv"
+    backup_path = db_path.parent / f"{sub}_sessions_backup.tsv"
+
+    shutil.copy2(deleted_path, backup_path)
+
+    with duckdb.connect(db_path) as con:
+        is_present = con.execute(
+            "SELECT is_present FROM file_manifest WHERE relative_path = ?;",
+            [f"{sub}/{sub}_sessions.tsv"],
+        ).fetchone()[0]
+        assert is_present
+
+    deleted_path.unlink()
+    load_manifest(raw_path, db_path)
+
+    with duckdb.connect(db_path) as con:
+        is_present = con.execute(
+            "SELECT is_present FROM file_manifest WHERE relative_path = ?;",
+            [f"{sub}/{sub}_sessions.tsv"],
+        ).fetchone()[0]
+        assert not is_present
+
+    shutil.copy2(backup_path, deleted_path)
+    load_manifest(raw_path, db_path)
+
+    with duckdb.connect(db_path) as con:
+        is_present = con.execute(
+            "SELECT is_present FROM file_manifest WHERE relative_path = ?;",
+            [f"{sub}/{sub}_sessions.tsv"],
+        ).fetchone()[0]
+        assert is_present

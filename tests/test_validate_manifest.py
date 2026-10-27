@@ -1,3 +1,5 @@
+import shutil
+
 import duckdb
 import pandas as pd
 import pytest
@@ -258,3 +260,78 @@ def test_session_scans_in_wrong_directory_returns_fail(test_paths):
         assert results[0][4] == 0
     finally:
         con.close()
+
+
+def test_participant_sessions_and_session_scans_is_present(test_paths):
+    raw_path, db_path = test_paths
+
+    sub = "sub-9123847713"
+    ses = "ses-V02"
+
+    sub_sessions = raw_path / sub / f"{sub}_sessions.tsv"
+    session_scans = raw_path / sub / ses / f"{sub}_{ses}_scans.tsv"
+
+    backup_sessions = db_path.parent / f"{sub}_sessions_backup.tsv"
+    backup_scans = db_path.parent / f"{sub}_{ses}_scans_backup.tsv"
+
+    (raw_path / sub / ses).mkdir(exist_ok=True, parents=True)
+
+    sub_sessions.write_text(
+        "session_id\tsite\tage\tage_adjusted\thead_size\n"
+        "ses-V02\thbcdsite57\t0.023\t9\t58\n"
+    )
+    session_scans.write_text(
+        "filename\nmotion/synthetic_motion.tsv\n", encoding="utf-8"
+    )
+
+    load_manifest(raw_path, db_path)
+    with duckdb.connect(db_path) as con:
+        rows = validate_participant_sessions(con).fetchall()
+        target_rows = [row for row in rows if row[0] == sub.removeprefix("sub-")]
+        assert len(target_rows) == 1
+        assert target_rows[0][3] == "PASS"
+
+    with duckdb.connect(db_path) as con:
+        scan_rows = validate_session_scans(con).fetchall()
+        target_scan_rows = [
+            row
+            for row in scan_rows
+            if row[0] == sub.removeprefix("sub-") and row[1] == ses.removeprefix("ses-")
+        ]
+        assert len(target_scan_rows) == 1
+        assert target_scan_rows[0][3] == "PASS"
+
+    shutil.copy2(sub_sessions, backup_sessions)
+    shutil.copy2(session_scans, backup_scans)
+
+    sub_sessions.unlink()
+    session_scans.unlink()
+
+    load_manifest(raw_path, db_path)
+    with duckdb.connect(db_path) as con:
+        res_session = validate_participant_sessions(con)
+        row_session = res_session.fetchall()
+        assert len(row_session) == 1
+        assert row_session[0][3] == "FAIL"
+
+    with duckdb.connect(db_path) as con:
+        res_scan = validate_session_scans(con)
+        row_scan = res_scan.fetchall()
+        assert len(row_scan) == 1
+        assert row_scan[0][3] == "FAIL"
+
+    shutil.copy2(backup_sessions, sub_sessions)
+    shutil.copy2(backup_scans, session_scans)
+
+    load_manifest(raw_path, db_path)
+    with duckdb.connect(db_path) as con:
+        res_session = validate_participant_sessions(con)
+        row_session = res_session.fetchall()
+        assert len(row_session) == 1
+        assert row_session[0][3] == "PASS"
+
+    with duckdb.connect(db_path) as con:
+        res_scan = validate_session_scans(con)
+        row_scan = res_scan.fetchall()
+        assert len(row_scan) == 1
+        assert row_scan[0][3] == "PASS"

@@ -9,15 +9,71 @@ from hbcd_data_platform.scan_files import scan_files
 
 
 def _delete_missing_files(con, df) -> None:
-    con.sql(
+    to_delete = con.execute(
         """
-        DELETE FROM file_manifest
+        SELECT file_id
+        FROM file_manifest
         WHERE NOT EXISTS (
             SELECT 1
             FROM df
             WHERE df.relative_path = file_manifest.relative_path
         );
         """
+    ).fetchall()
+
+    if not to_delete:
+        return
+
+    to_delete = [x[0] for x in to_delete]
+    processing_exists = con.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = 'main'
+          AND table_name = 'imu_processing_status';
+        """
+    ).fetchone()[0]
+    if processing_exists:
+        con.execute(
+            """
+            DELETE FROM imu_processing_status
+            WHERE imu_processing_status.file_id = ANY($to_delete)
+            """,
+            {"to_delete": to_delete},
+        )
+    summary_exists = con.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = 'main'
+          AND table_name = 'imu_window_summary';
+        """
+    ).fetchone()[0]
+    if summary_exists:
+        con.execute(
+            """
+            DELETE FROM imu_window_summary
+            WHERE imu_window_summary.file_id = ANY($to_delete)
+            """,
+            {"to_delete": to_delete},
+        )
+    print(f"This is COUNT result of the file_id: {to_delete[0]}")
+    print(
+        con.execute(
+            """
+            SELECT COUNT(*)
+            FROM imu_window_summary
+            WHERE file_id = ?
+            """,
+            [to_delete[0]],
+        ).fetchone()
+    )
+    con.execute(
+        """
+        DELETE FROM file_manifest
+        WHERE file_manifest.file_id = ANY($to_delete);
+        """,
+        {"to_delete": to_delete},
     )
 
 
@@ -63,7 +119,14 @@ def load_manifest(raw_path, db_path, scan_time=None):
                 suffix VARCHAR,
                 discovered_at TIMESTAMP NOT NULL,
                 last_seen_at TIMESTAMP NOT NULL,
+                is_present BOOLEAN NOT NULL DEFAULT FALSE
             )
+            """
+        )
+        con.sql(
+            """
+            ALTER TABLE file_manifest
+            ADD COLUMN IF NOT EXISTS is_present BOOLEAN DEFAULT FALSE;
             """
         )
 
@@ -124,7 +187,8 @@ def load_manifest(raw_path, db_path, scan_time=None):
                     acquisition,
                     suffix,
                     discovered_at,
-                    last_seen_at
+                    last_seen_at,
+                    is_present
                 )
                 SELECT
                     filename,
@@ -139,7 +203,8 @@ def load_manifest(raw_path, db_path, scan_time=None):
                     acquisition,
                     suffix,
                     discovered_at,
-                    last_seen_at
+                    last_seen_at,
+                    TRUE
                 FROM df
                 ON CONFLICT (relative_path)
                 DO UPDATE SET
@@ -153,10 +218,22 @@ def load_manifest(raw_path, db_path, scan_time=None):
                     tracking_system = excluded.tracking_system,
                     acquisition = excluded.acquisition,
                     suffix = excluded.suffix,
-                    last_seen_at = excluded.last_seen_at;
+                    last_seen_at = excluded.last_seen_at,
+                    is_present = TRUE;
                 """
             )
-            _delete_missing_files(con, df)
+            con.sql(
+                """
+                UPDATE file_manifest AS f
+                SET is_present = FALSE
+                WHERE f.is_present = TRUE
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM df AS d
+                    WHERE d.relative_path = f.relative_path
+                );
+                """
+            )
             con.sql("COMMIT")
         except Exception:
             con.sql("ROLLBACK")

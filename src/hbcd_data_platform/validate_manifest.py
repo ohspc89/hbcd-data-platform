@@ -30,11 +30,15 @@ def validate_participant_sessions(con):
         ), subset AS (
             SELECT participant_id, suffix, extension
             FROM file_manifest
-            WHERE extension = '.tsv' AND suffix = 'sessions' AND session_id IS NULL AND relative_path = 'sub-' || participant_id || '/' || 'sub-' || participant_id || '_sessions.tsv'
+            WHERE extension = '.tsv'
+            AND suffix = 'sessions'
+            AND session_id IS NULL
+            AND is_present = TRUE
+            AND relative_path = 'sub-' || participant_id || '/' || 'sub-' || participant_id || '_sessions.tsv'
         ), session_validation AS (
             SELECT
                 p.participant_id,
-                COUNT(s.suffix) AS sessions_count
+                COUNT(s.suffix) AS sessions_count,
             FROM pool p
             LEFT JOIN subset s
               ON p.participant_id = s.participant_id
@@ -82,7 +86,11 @@ def validate_session_scans(con):
         ), subset AS (
             SELECT participant_id, session_id, suffix, extension
             FROM file_manifest
-            WHERE extension = '.tsv' AND suffix = 'scans' AND session_id IS NOT NULL AND relative_path = 'sub-' || participant_id || '/ses-' || session_id || '/sub-' || participant_id || '_ses-' || session_id || '_scans.tsv'
+            WHERE extension = '.tsv'
+            AND suffix = 'scans'
+            AND session_id IS NOT NULL
+            AND is_present = TRUE
+            AND relative_path = 'sub-' || participant_id || '/ses-' || session_id || '/sub-' || participant_id || '_ses-' || session_id || '_scans.tsv'
         ), scans_validation AS (
             SELECT
                 p.participant_id,
