@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 
 import hbcd_data_platform.imu as imu_module
 
@@ -43,11 +44,13 @@ def run_imu_processing(
         ON f.file_id = i.file_id
         WHERE (i.file_id IS NULL
                OR i.processed_size_bytes IS DISTINCT FROM f.size_bytes
-               OR i.processed_modified_at IS DISTINCT FROM f.modified_at)
+               OR i.processed_modified_at IS DISTINCT FROM f.modified_at
+               OR i.window_seconds IS DISTINCT FROM ?)
         AND f.tracking_system = 'imu'
         AND f.suffix = 'motion'
         AND f.extension = '.parquet'
-        """
+        """,
+        [window_seconds],
     ).fetchall()
 
     for file_id, relative_path in files_to_process:
@@ -83,7 +86,11 @@ def process_imu_file(
         FileNotFoundError: If the source file does not exist.
     """
     row = con.execute(
-        "SELECT relative_path FROM file_manifest WHERE file_id = ?",
+        """
+        SELECT relative_path, size_bytes, modified_at
+        FROM file_manifest
+        WHERE file_id = ?
+        """,
         [file_id],
     ).fetchone()
 
@@ -94,9 +101,20 @@ def process_imu_file(
     if not file_path.exists():
         raise FileNotFoundError(f"File Not Exists: '{file_path}'")
 
+    before = file_path.stat()
+    modified_at = (
+        pd.to_datetime(before.st_mtime, unit="s").as_unit("us").to_pydatetime()
+    )
+    if modified_at != row[2] or before.st_size != row[1]:
+        raise ValueError(f"File changed before processing: '{file_path}'")
+
     summaries = imu_module.summarize_imu_windows(
         file_path, window_seconds=window_seconds
     )
 
+    after = file_path.stat()
+    if before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns:
+        raise ValueError(f"File changed during processing: '{file_path}'")
+
     # Returns None
-    imu_module.replace_imu_window_summaries(con, file_id, summaries)
+    imu_module.replace_imu_window_summaries(con, file_id, summaries, window_seconds)

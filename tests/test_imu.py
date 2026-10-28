@@ -686,14 +686,14 @@ def test_summarize_imu_sensor_qc(tmp_path, leg):
 
 
 @pytest.mark.parametrize(
-    ("accel_col", "x_null_count", "y_null_count"),
+    ("accel_col", "x_nan_count", "y_nan_count", "x_null_count", "y_null_count"),
     [
-        ("LeftAnkle_ACCEL_x", 1, 0),
-        ("LeftAnkle_ACCEL_y", 0, 1),
+        ("LeftAnkle_ACCEL_x", 1, 0, 1, 0),
+        ("LeftAnkle_ACCEL_y", 0, 1, 0, 1),
     ],
 )
-def test_summarize_imu_sensor_qc_single_null(
-    tmp_path, accel_col, x_null_count, y_null_count
+def test_summarize_imu_sensor_qc_accel_null_and_nan(
+    tmp_path, accel_col, x_nan_count, y_nan_count, x_null_count, y_null_count
 ):
     filepath = (
         tmp_path
@@ -706,6 +706,15 @@ def test_summarize_imu_sensor_qc_single_null(
         con.execute(
             "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
             [str(filepath)],
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {accel_col} = CAST('NaN' as DOUBLE)
+            WHERE imu_latency = $timestamp
+            """,
+            {"timestamp": 2.0},
         )
 
         con.execute(
@@ -740,10 +749,12 @@ def test_summarize_imu_sensor_qc_single_null(
     )
 
     assert output[0]["sample_count"] == 200
+    assert output[0]["nan_count"] == x_nan_count
     assert output[0]["null_count"] == x_null_count
     assert output[0]["out_of_range_count"] == 0
     assert output[0]["saturation_count"] == 0
     assert output[1]["sample_count"] == 200
+    assert output[1]["nan_count"] == y_nan_count
     assert output[1]["null_count"] == y_null_count
     assert output[1]["out_of_range_count"] == 1
     assert output[1]["saturation_count"] == 1
@@ -811,6 +822,9 @@ def test_summarize_imu_sensor_qc_z_axis(tmp_path):
 @pytest.mark.parametrize(
     (
         "gyro_col",
+        "x_nan_count",
+        "y_nan_count",
+        "z_nan_count",
         "x_null_count",
         "y_null_count",
         "z_null_count",
@@ -822,14 +836,17 @@ def test_summarize_imu_sensor_qc_z_axis(tmp_path):
         "z_saturation_count",
     ),
     [
-        ("LeftAnkle_GYRO_x", 1, 0, 0, 1, 0, 0, 1, 0, 0),
-        ("LeftAnkle_GYRO_y", 0, 1, 0, 0, 1, 0, 0, 1, 0),
-        ("LeftAnkle_GYRO_z", 0, 0, 1, 0, 0, 1, 0, 0, 1),
+        ("LeftAnkle_GYRO_x", 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0),
+        ("LeftAnkle_GYRO_y", 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0),
+        ("LeftAnkle_GYRO_z", 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1),
     ],
 )
-def test_summarize_imu_sensor_qc_gyro_single_null(
+def test_summarize_imu_sensor_qc_gyro_null_and_nan(
     tmp_path,
     gyro_col,
+    x_nan_count,
+    y_nan_count,
+    z_nan_count,
     x_null_count,
     y_null_count,
     z_null_count,
@@ -851,6 +868,15 @@ def test_summarize_imu_sensor_qc_gyro_single_null(
         con.execute(
             "CREATE TEMP TABLE imu_test AS SELECT * FROM read_parquet(?);",
             [str(filepath)],
+        )
+
+        con.execute(
+            f"""
+            UPDATE imu_test
+            SET {gyro_col} = CAST('NaN' AS DOUBLE)
+            WHERE imu_latency = $timestamp
+            """,
+            {"timestamp": 2.0},
         )
 
         con.execute(
@@ -885,14 +911,17 @@ def test_summarize_imu_sensor_qc_gyro_single_null(
     )
 
     assert output[3]["sample_count"] == 200
+    assert output[3]["nan_count"] == x_nan_count
     assert output[3]["null_count"] == x_null_count
     assert output[3]["out_of_range_count"] == x_oor_count
     assert output[3]["saturation_count"] == x_saturation_count
     assert output[4]["sample_count"] == 200
+    assert output[4]["nan_count"] == y_nan_count
     assert output[4]["null_count"] == y_null_count
     assert output[4]["out_of_range_count"] == y_oor_count
     assert output[4]["saturation_count"] == y_saturation_count
     assert output[5]["sample_count"] == 200
+    assert output[5]["nan_count"] == z_nan_count
     assert output[5]["null_count"] == z_null_count
     assert output[5]["out_of_range_count"] == z_oor_count
     assert output[5]["saturation_count"] == z_saturation_count
@@ -931,6 +960,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[0] == {
         "column_name": "LeftAnkle_ACCEL_x",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -938,6 +968,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[1] == {
         "column_name": "LeftAnkle_ACCEL_y",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -945,6 +976,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[2] == {
         "column_name": "LeftAnkle_ACCEL_z",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -952,6 +984,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[3] == {
         "column_name": "LeftAnkle_GYRO_x",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -959,6 +992,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[4] == {
         "column_name": "LeftAnkle_GYRO_y",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -966,6 +1000,7 @@ def test_summarize_imu_sensor_qc_returns_zero_counts_for_empty_recording(tmp_pat
     assert results[5] == {
         "column_name": "LeftAnkle_GYRO_z",
         "sample_count": 0,
+        "nan_count": 0,
         "null_count": 0,
         "out_of_range_count": 0,
         "saturation_count": 0,
@@ -1336,6 +1371,7 @@ def test_replace_imu_window_summaries(tmp_path):
                     "gyro_magnitude_variance": 327,
                 },
             ],
+            window_seconds=2.0,
         )
 
         # Maybe test whether a summary with a different file_id
@@ -1355,6 +1391,7 @@ def test_replace_imu_window_summaries(tmp_path):
                     "gyro_magnitude_variance": 343,
                 },
             ],
+            window_seconds=2.0,
         )
 
         # Testing normal functioning
@@ -1381,6 +1418,7 @@ def test_replace_imu_window_summaries(tmp_path):
                     "gyro_magnitude_variance": None,
                 }
             ],
+            window_seconds=2.0,
         )
         # Previous entry deleted & entry with a different file_id not affected
         assert con.execute("SELECT COUNT(*) FROM imu_window_summary").fetchone()[0] == 2
@@ -1399,7 +1437,7 @@ def test_replace_imu_window_summaries(tmp_path):
         assert variances[0][1] is None
 
         # Empty list?
-        replace_imu_window_summaries(con, valid_file_ids[0], [])
+        replace_imu_window_summaries(con, valid_file_ids[0], [], window_seconds=2.0)
 
         # So again, this will erase entries with valid_file_ids[0], not valid_file_ids[1]
         result2 = con.execute("SELECT * FROM imu_window_summary;").fetchall()[0]
@@ -1421,6 +1459,7 @@ def test_replace_imu_window_summaries(tmp_path):
                     "gyro_magnitude_variance": 138,
                 }
             ],
+            window_seconds=2.0,
         )
 
         # Then put something that violates the rule.
@@ -1450,10 +1489,87 @@ def test_replace_imu_window_summaries(tmp_path):
                         "gyro_magnitude_variance": 382,
                     },
                 ],
+                # if it fails and rools back, this should be staying as 2.0
+                window_seconds=4.0,
             )
 
         table_values = con.execute("SELECT * FROM imu_window_summary").fetchall()[0]
         assert table_values == (valid_file_ids[1], 1, 0.0, 2.0, 50, 50, 50, 0.47, 138)
+        assert (
+            con.execute(
+                "SELECT window_seconds FROM imu_processing_status WHERE file_id = ?",
+                [valid_file_ids[1]],
+            ).fetchone()[0]
+            == 2.0
+        )
 
+    finally:
+        con.close()
+
+
+def test_schema_change_of_create_imu_processing_status_table(tmp_path):
+    rawpath = tmp_path / "rawdata"
+    db_path = tmp_path / "test.duckdb"
+
+    rawpath.mkdir()
+
+    filepath = (
+        rawpath
+        / "sub-2000000001_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+    make_synthetic_imu_parquet(filepath)
+
+    load_manifest(rawpath, db_path)
+
+    con = duckdb.connect(db_path)
+    try:
+        create_imu_window_summary_table(con)
+        # First make a processing status table without window_seconds
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS imu_processing_status (
+                file_id BIGINT PRIMARY KEY,
+                processed_at TIMESTAMP,
+                processed_size_bytes BIGINT,
+                processed_modified_at TIMESTAMP,
+                FOREIGN KEY (file_id)
+                REFERENCES file_manifest(file_id)
+            );
+            """
+        )
+        # Get a file id of a parquet
+        valid_file_id = con.execute(
+            """
+            SELECT file_id
+            FROM file_manifest
+            WHERE extension = '.parquet'
+            ORDER BY file_id LIMIT 1;
+            """
+        ).fetchone()[0]
+        con.execute(
+            """
+            INSERT INTO imu_processing_status (
+                file_id,
+                processed_at,
+                processed_size_bytes,
+                processed_modified_at
+            )
+            VALUES (?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+            """,
+            [valid_file_id, 791083],
+        )
+        # This should make the window_seconds column NULL
+        create_imu_processing_status_table(con)
+        print(con.sql("SELECT * FROM imu_processing_status"))
+        assert (
+            con.execute(
+                """
+                SELECT window_seconds from imu_processing_status
+                WHERE file_id = ?
+                """,
+                [valid_file_id],
+            ).fetchone()[0]
+            is None
+        )
     finally:
         con.close()

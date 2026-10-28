@@ -245,6 +245,7 @@ def summarize_imu_sensor_qc(
                 {
                     "column_name": column,
                     "sample_count": row[0],
+                    "nan_count": row[offset - 1],
                     "null_count": row[offset],
                     "out_of_range_count": row[offset + 1],
                     "saturation_count": row[offset + 2],
@@ -320,9 +321,16 @@ def create_imu_processing_status_table(con: duckdb.DuckDBPyConnection) -> None:
             processed_at TIMESTAMP,
             processed_size_bytes BIGINT,
             processed_modified_at TIMESTAMP,
+            window_seconds DOUBLE,
             FOREIGN KEY (file_id)
             REFERENCES file_manifest(file_id)
         );
+        """
+    )
+    con.execute(
+        """
+        ALTER TABLE imu_processing_status
+        ADD COLUMN IF NOT EXISTS window_seconds DOUBLE
         """
     )
 
@@ -355,6 +363,7 @@ def replace_imu_window_summaries(
     con: duckdb.DuckDBPyConnection,
     file_id: int,
     summaries: list[dict],
+    window_seconds: float,
 ) -> None:
     rows = []
     for summary in summaries:
@@ -420,16 +429,18 @@ def replace_imu_window_summaries(
                 file_id,
                 processed_at,
                 processed_size_bytes,
-                processed_modified_at
+                processed_modified_at,
+                window_seconds
             )
-            VALUES (?, CURRENT_TIMESTAMP, ?, ?)
+            VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)
             ON CONFLICT(file_id)
             DO UPDATE SET
                 processed_at = excluded.processed_at,
                 processed_size_bytes = excluded.processed_size_bytes,
-                processed_modified_at = excluded.processed_modified_at
+                processed_modified_at = excluded.processed_modified_at,
+                window_seconds = excluded.window_seconds
             """,
-            [file_id, file_manifest_row[0], file_manifest_row[1]],
+            [file_id, file_manifest_row[0], file_manifest_row[1], window_seconds],
         )
 
         con.execute("COMMIT")
