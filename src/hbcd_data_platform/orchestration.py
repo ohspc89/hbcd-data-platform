@@ -13,7 +13,7 @@ def run_imu_processing(
     con: duckdb.DuckDBPyConnection,
     raw_path: Path,
     window_seconds: float = 2.0,
-) -> None:
+) -> dict[str, int]:
     """Process new or modified IMU files and store window-level summaries.
 
     Files are selected by comparing file_manifest with imu_processing_status.
@@ -21,8 +21,10 @@ def run_imu_processing(
       - It has no processing status.
       - Its size_bytes has changed since the last successful processing.
       - Its modified_at has changed since the last successful processing.
+      - Its processing window duration differs from the previously used value.
 
     Only IMU motion Parquet files are eligible for processing.
+    Present files are going to be processed.
 
     Individual file failures are logged without stopping the remaining files.
 
@@ -36,6 +38,18 @@ def run_imu_processing(
 
     imu_module.create_imu_processing_status_table(con)
 
+    eligible = con.execute(
+        """
+        SELECT COUNT(*)
+        FROM file_manifest
+        WHERE tracking_system = 'imu'
+        AND acquisition = 'primary'
+        AND suffix = 'motion'
+        AND extension = '.parquet'
+        AND is_present = TRUE
+        """
+    ).fetchone()[0]
+
     files_to_process = con.execute(
         """
         SELECT f.file_id, f.relative_path
@@ -47,20 +61,36 @@ def run_imu_processing(
                OR i.processed_modified_at IS DISTINCT FROM f.modified_at
                OR i.window_seconds IS DISTINCT FROM ?)
         AND f.tracking_system = 'imu'
+        AND f.acquisition = 'primary'
         AND f.suffix = 'motion'
         AND f.extension = '.parquet'
+        AND f.is_present = TRUE
         """,
         [window_seconds],
     ).fetchall()
 
+    skipped = eligible - len(files_to_process)
+
+    processed = 0
+    failed = 0
     for file_id, relative_path in files_to_process:
         try:
             if (raw_path / relative_path).is_file():
                 process_imu_file(con, file_id, raw_path, window_seconds)
+                processed += 1
             else:
-                logger.debug("File not exists=%s", relative_path)
+                logger.warning("File not exists=%s", relative_path)
+                failed += 1
         except Exception:
             logger.exception("Failed to process file_id=%s", file_id)
+            failed += 1
+
+    return {
+        "eligible":eligible,
+        "skipped": skipped,
+        "processed": processed,
+        "failed": failed
+    }
 
 
 def process_imu_file(

@@ -4,8 +4,10 @@ import sys
 import duckdb
 import pytest
 
+from conftest import make_synthetic_imu_parquet
 import hbcd_data_platform.pipeline as pipeline_module
 from hbcd_data_platform.config import PipelineConfig
+from hbcd_data_platform.load_manifest import load_manifest
 
 
 @pytest.fixture
@@ -282,3 +284,183 @@ def test_ingest_fails_when_db_path_is_relative_to_raw_path(tmp_path):
     assert result.returncode != 0, result.stderr
     assert not db_path.exists()
     assert str(db_path.resolve()) in result.stderr
+
+
+def test_process_imu_raises_error_when_no_db_file_exists(test_paths):
+    raw_path, db_path = test_paths
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "Database file not found" in result.stderr
+
+
+def test_process_imu_raises_error_when_no_file_manifest_exists(test_paths):
+    raw_path, db_path = test_paths
+
+    con = duckdb.connect(db_path)
+    con.close()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "The table 'file_manifest' is not found" in result.stderr
+
+
+def test_process_imu_runs_when_proper_manifest_exists(test_paths):
+    raw_path, db_path = test_paths
+
+    filepath = (
+        raw_path
+        / "sub-2938190832_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    )
+
+    make_synthetic_imu_parquet(filepath)
+
+    load_manifest(raw_path, db_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    with duckdb.connect(db_path) as con:
+        n_windows = con.execute(
+            "SELECT COUNT(*) FROM imu_window_summary"
+        ).fetchone()[0]
+
+    # 4 rows
+    assert n_windows == 4
+
+
+def test_process_imu_returns_one_when_processing_fails(test_paths):
+    raw_path, db_path = test_paths
+
+    for task in ["LeftLegMovement", "RightLegMovement"]:
+        make_synthetic_imu_parquet(
+            raw_path / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet")
+
+    load_manifest(raw_path, db_path)
+
+    # Delete one file
+    (raw_path / "sub-2938190832_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet").unlink()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "Processed" in result.stdout
+    assert "Processed : 1" in result.stdout
+    assert "Failed" in result.stdout
+    assert "Failed    : 1" in result.stdout
+
+    with duckdb.connect(db_path) as con:
+        processed_files = con.execute(
+            """
+            SELECT f.task
+            FROM imu_processing_status AS s
+            JOIN file_manifest f ON s.file_id = f.file_id
+            """
+        ).fetchall()
+
+        assert processed_files == [("RightLegMovement",)]
+
+
+def test_repeated_process_imu_skips_unchanged_files(test_paths):
+    raw_path, db_path = test_paths
+
+    for task in ["LeftLegMovement", "RightLegMovement"]:
+        make_synthetic_imu_parquet(
+            raw_path / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet")
+
+    load_manifest(raw_path, db_path)
+
+    first_result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first_result.returncode == 0, first_result.stderr
+    assert "Processed : 2" in first_result.stdout
+    assert "Skipped   : 0" in first_result.stdout
+
+    second_result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            raw_path,
+            "--db-path",
+            db_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert second_result.returncode == 0, second_result.stderr
+    assert "Processed : 0" in second_result.stdout
+    assert "Skipped   : 2" in second_result.stdout
