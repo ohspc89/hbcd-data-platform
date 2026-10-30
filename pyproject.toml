@@ -1,7 +1,7 @@
 [project]
 name = "hbcd-data-platform"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local data engineering pipeline for BIDS-style wearable sensor metadata, quality control, and incremental IMU processing"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,4 +19,5 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.17.1",
 ]

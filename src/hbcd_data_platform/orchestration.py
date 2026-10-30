@@ -86,10 +86,10 @@ def run_imu_processing(
             failed += 1
 
     return {
-        "eligible":eligible,
+        "eligible": eligible,
         "skipped": skipped,
         "processed": processed,
-        "failed": failed
+        "failed": failed,
     }
 
 

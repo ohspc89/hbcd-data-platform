@@ -2,7 +2,7 @@
 
 A Python and DuckDB data engineering portfolio project for discovering, validating, and summarizing BIDS-style infant wearable-sensor data. Inspired by the data-management challenges of the Healthy Brain and Child Development (HBCD) Study.
 
-**Status:** Work in progress. Metadata ingestion and validation are available through a CLI. IMU time-series QC, window summaries, and manifest-driven incremental processing are implemented as Python APIs. IMU processing is not yet connected to the CLI.
+**Status:** Functional local MVP. Metadata ingestion, validation, and incremental IMU processing are available through a CLI. Automated tests cover normal execution, reruns, and failure handling.
 
 ## Problem and approach
 
@@ -37,6 +37,9 @@ Scanner / filename parser
     v
 DuckDB: file_manifest ---> metadata validation ---> validation_results
 
+CLI: process-imu
+    |
+    v
 Python API: run_imu_processing()
     |
     +--- file_manifest + imu_processing_status: select files
@@ -52,7 +55,7 @@ Parquet IMU file ---> summarize_imu_windows()
                       (one transaction)
 ```
 
-Manifest-driven IMU orchestration is available through the Python API. The CLI `run` command currently performs metadata ingestion and validation only. See [architecture details](docs/architecture.md).
+Manifest-driven IMU orchestration is available through CLI and the Python API. See [architecture details](docs/architecture.md).
 
 ### Data model
 
@@ -82,6 +85,40 @@ uv run hbcd-data-platform run \
 
 The CLI also exposes `ingest` (same two arguments) and `validate --db-path /path/to/platform.duckdb` (against an existing database).
 
+### Incremental IMU processing
+
+IMU processing requires an existing file manifest. Run ingestion (or ingestion + validation, showcased above) first:
+
+```bash
+uv run hbcd-data-platform ingest \
+  --raw-path /path/to/bids-data \
+  --db-path /path/to/platform.duckdb
+```
+
+Then process eligible IMU recordings
+
+```bash
+uv run hbcd-data-platform process-imu \
+  --raw-path /path/to/bids-data \
+  --db-path /path/to/platform.duckdb \
+  --window-seconds 2.0
+```
+
+The default window duration is 2 seconds.
+
+The command processes currently present primary IMU motion Parquet files.
+Previously processed files are skipped unless their size, modification
+time, or requested window duration has changed.
+
+The command reports eligible, processed, skipped, and failed file counts.
+Processing continues after individual file failures, but the command
+exits with code 1 if any file fails.
+
+Run `ingest` again after adding, removing, or modifying source files
+to refresh the manifest.
+
+**Programmatic usage**
+
 IMU functions are in `src/hbcd_data_platform/imu.py`, including `summarize_imu_windows()`, `create_imu_window_summary_table()`, and `replace_imu_window_summaries()`.
 
 To run incremental IMU processing through Python after scanning the source directory:
@@ -102,7 +139,7 @@ with duckdb.connect(db_path) as con:
     run_imu_processing(con, raw_path, window_seconds=2.0)
 ```
 
-Only manifest entries with `tracking_system='imu'`, `suffix='motion'`, and `extension='.parquet'` are selected. Window summaries support the left/right leg movement tasks. Individual file failures are logged while processing continues for other files; a failed file's previous summaries and processing status remain unchanged. After a detected source change, rescan and rerun processing once the source is stable.
+Only manifest entries with `tracking_system='imu'`, `acquisition='primary'`, `suffix='motion'`, `extension='.parquet'`, and `is_present=TRUE` are eligible for processing. Window summaries support the left/right leg movement tasks. Individual file failures are logged while processing continues for other files; a failed file's previous summaries and processing status remain unchanged. After a detected source change, rescan and rerun processing once the source is stable.
 
 Change detection uses file size and modification time rather than content hashes. Existing processing-status tables gain the window-duration column automatically; rows with an unknown duration are selected for reprocessing.
 
@@ -114,12 +151,9 @@ uv run pytest -q
 
 Tests cover valid and invalid metadata, timestamp anomalies, sensor NaN/null counts, window boundaries, incremental reruns, changed window durations, missing and reappearing files, processing-status schema migration, source changes before and during processing, and transaction rollback. GitHub Actions runs pytest on pushes and pull requests to `main`.
 
+CLI integration tests verify successful processing, repeated execution, partial failures, exit codes, and logging behavior.
+
 **No real HBCD participant recordings or identifiable participant data are distributed with this repository.** Tests use synthetic fixtures.
 
-## Next engineering milestones
-
-1. **CLI integration:** Add manifest-driven IMU processing to the CLI.
-2. **Run reporting:** Report processed, skipped, and failed files with a run-level summary.
-3. **Performance:** Measure scan and IMU-processing performance on larger synthetic workloads.
 
 This is a portfolio and learning project, **not a deployed clinical system**. Production AWS, Snowflake, HL7/FHIR, and HIPAA-compliant infrastructure are not claimed.

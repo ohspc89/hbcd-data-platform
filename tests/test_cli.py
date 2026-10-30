@@ -365,9 +365,7 @@ def test_process_imu_runs_when_proper_manifest_exists(test_paths):
     assert result.returncode == 0, result.stderr
 
     with duckdb.connect(db_path) as con:
-        n_windows = con.execute(
-            "SELECT COUNT(*) FROM imu_window_summary"
-        ).fetchone()[0]
+        n_windows = con.execute("SELECT COUNT(*) FROM imu_window_summary").fetchone()[0]
 
     # 4 rows
     assert n_windows == 4
@@ -378,12 +376,17 @@ def test_process_imu_returns_one_when_processing_fails(test_paths):
 
     for task in ["LeftLegMovement", "RightLegMovement"]:
         make_synthetic_imu_parquet(
-            raw_path / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet")
+            raw_path
+            / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet"
+        )
 
     load_manifest(raw_path, db_path)
 
     # Delete one file
-    (raw_path / "sub-2938190832_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet").unlink()
+    (
+        raw_path
+        / "sub-2938190832_ses-V02_task-LeftLegMovement_tracksys-imu_acq-primary_motion.parquet"
+    ).unlink()
 
     result = subprocess.run(
         [
@@ -401,10 +404,14 @@ def test_process_imu_returns_one_when_processing_fails(test_paths):
         check=False,
     )
     assert result.returncode == 1, result.stderr
-    assert "Processed" in result.stdout
+
+    # Verify processing summary
     assert "Processed : 1" in result.stdout
-    assert "Failed" in result.stdout
     assert "Failed    : 1" in result.stdout
+
+    # Verify warning log
+    assert "WARNING" in result.stderr
+    assert "File not exists=" in result.stderr
 
     with duckdb.connect(db_path) as con:
         processed_files = con.execute(
@@ -423,7 +430,9 @@ def test_repeated_process_imu_skips_unchanged_files(test_paths):
 
     for task in ["LeftLegMovement", "RightLegMovement"]:
         make_synthetic_imu_parquet(
-            raw_path / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet")
+            raw_path
+            / f"sub-2938190832_ses-V02_task-{task}_tracksys-imu_acq-primary_motion.parquet"
+        )
 
     load_manifest(raw_path, db_path)
 
@@ -464,3 +473,38 @@ def test_repeated_process_imu_skips_unchanged_files(test_paths):
     assert second_result.returncode == 0, second_result.stderr
     assert "Processed : 0" in second_result.stdout
     assert "Skipped   : 2" in second_result.stdout
+
+
+def test_process_imu_logs_exception_traceback(test_paths):
+    raw_path, db_path = test_paths
+
+    filename = (
+        "sub-2938190832_ses-V02_task-LeftLegMovement_"
+        "tracksys-imu_acq-primary_motion.parquet"
+    )
+    filepath = raw_path / filename
+
+    filepath.write_bytes(b"This is not a valid Parquet file")
+
+    load_manifest(raw_path, db_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hbcd_data_platform.cli",
+            "process-imu",
+            "--raw-path",
+            str(raw_path),
+            "--db-path",
+            str(db_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Failed to process file_id=" in result.stderr
+    assert "Traceback (most recent call last)" in result.stderr
+    assert "Failed    : 1" in result.stdout

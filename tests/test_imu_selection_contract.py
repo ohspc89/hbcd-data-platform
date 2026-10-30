@@ -6,6 +6,7 @@ Copy this file into the repository's tests/ directory and run:
 This test is expected to fail against the 2026-10-28 GitHub main branch:
 run_imu_processing currently does not filter acquisition='primary'.
 """
+
 import duckdb
 
 from conftest import make_synthetic_imu_parquet
